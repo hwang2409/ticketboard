@@ -32,7 +32,7 @@ The app does not call LLM APIs or store model keys. GitHub and Linear enrichment
 
 ```bash
 pnpm install
-pnpm dev
+make
 ```
 
 Open `http://localhost:4317`.
@@ -94,6 +94,8 @@ Most cache TTLs are also configurable in `.env.example`, but they are not requir
 
 | Command | Description |
 | --- | --- |
+| `make` | Start the dev server and guarded Codex brief watcher together. |
+| `make dev` | Same as `make`; accepts `PORT`, `TICKETBOARD_URL`, and `BRIEF_WATCH_ARGS`. |
 | `pnpm dev` | Start the local Express/Vite server. |
 | `pnpm brief:snapshot` | Write and print the Codex evidence snapshot/prompt paths. |
 | `pnpm brief:codex` | Ask local Codex to generate the workflow brief JSON once. |
