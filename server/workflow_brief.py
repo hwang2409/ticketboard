@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +13,7 @@ from .collectors import Settings
 WORKFLOW_BRIEF_VERSION = 1
 DEFAULT_WORKFLOW_BRIEF_TTL_SECONDS = 10 * 60
 MAX_PLAN_DOC_CHARS = 40_000
+VOLATILE_EVIDENCE_KEYS = {"dashboardGeneratedAt", "generatedAt"}
 
 
 def workflow_brief_path(settings: Settings) -> Path:
@@ -114,6 +116,29 @@ def build_workflow_evidence_snapshot(
             }
             for ticket in dashboard.get("tickets", [])
         ],
+        "linearTickets": [
+            {
+                "ticketId": ticket.get("ticketId"),
+                "title": ticket.get("title"),
+                "stateName": ticket.get("stateName"),
+                "stateType": ticket.get("stateType"),
+                "priority": ticket.get("priority"),
+                "projectName": ticket.get("projectName"),
+                "cycleName": ticket.get("cycleName"),
+                "labels": [
+                    label.get("name")
+                    for label in ticket.get("labels", [])
+                    if isinstance(label, dict) and label.get("name")
+                ],
+                "branchName": ticket.get("branchName"),
+                "startedAt": ticket.get("startedAt"),
+                "completedAt": ticket.get("completedAt"),
+                "updatedAt": ticket.get("updatedAt"),
+                "url": ticket.get("url"),
+            }
+            for ticket in dashboard.get("linearTickets", [])
+        ],
+        "projectFocus": summarize_project_focus(dashboard.get("linearTickets", [])),
         "prs": [
             {
                 "number": pr.get("number"),
@@ -172,15 +197,54 @@ def build_workflow_evidence_snapshot(
         "planDoc": plan_doc,
         "instructions": {
             "purpose": (
-                "Use this evidence to choose one immediately actionable workflow. "
-                "Prefer live failing checks, active tmux/worktree lanes, and review "
-                "state over quiet strategic backlog unless the backlog is the only "
-                "unblocked next move."
+                "Use this evidence to choose one immediate focus workflow and a "
+                "parallel lane plan. Prefer live failing checks, active "
+                "tmux/worktree lanes, and review state over quiet strategic backlog. "
+                "Only mark lanes parallel-safe when their work can proceed without "
+                "overwriting the focus lane or depending on its result."
             ),
             "outputPath": str(workflow_brief_path(settings)),
         },
     }
     return snapshot
+
+
+def workflow_evidence_fingerprint(
+    snapshot: dict[str, Any],
+    *,
+    include_previews: bool = False,
+) -> str:
+    normalized = normalize_evidence_for_fingerprint(
+        snapshot,
+        include_previews=include_previews,
+    )
+    encoded = orjson.dumps(normalized, option=orjson.OPT_SORT_KEYS)
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def normalize_evidence_for_fingerprint(
+    value: Any,
+    *,
+    include_previews: bool,
+) -> Any:
+    if isinstance(value, dict):
+        normalized = {}
+        for key, child in value.items():
+            if key in VOLATILE_EVIDENCE_KEYS:
+                continue
+            if key == "tmuxPanePreviews" and not include_previews:
+                continue
+            normalized[key] = normalize_evidence_for_fingerprint(
+                child,
+                include_previews=include_previews,
+            )
+        return normalized
+    if isinstance(value, list):
+        return [
+            normalize_evidence_for_fingerprint(child, include_previews=include_previews)
+            for child in value
+        ]
+    return value
 
 
 def save_workflow_evidence_snapshot(settings: Settings, snapshot: dict[str, Any]) -> Path:
@@ -224,16 +288,81 @@ def validate_workflow_brief(payload: Any) -> tuple[bool, str | None]:
     now = payload.get("now")
     if not isinstance(now, dict):
         return False, "Workflow brief is missing now."
-    for key in ("title", "action", "why", "confidence"):
-        if not isinstance(now.get(key), str) or not now[key].strip():
-            return False, f"Workflow brief now.{key} must be a non-empty string."
-    for key in ("evidence", "commands"):
-        if key in now and not isinstance(now[key], list):
-            return False, f"Workflow brief now.{key} must be an array."
-    for key in ("next", "blocked", "staleSignals"):
+    valid, reason = validate_brief_item(now, "now")
+    if not valid:
+        return False, reason
+    for key in ("next", "blocked", "staleSignals", "lanes"):
         if key in payload and not isinstance(payload[key], list):
             return False, f"Workflow brief {key} must be an array."
+    for key in ("next", "blocked", "staleSignals", "lanes"):
+        for index, item in enumerate(payload.get(key, [])):
+            if not isinstance(item, dict):
+                return False, f"Workflow brief {key}[{index}] must be an object."
+            valid, reason = validate_brief_item(item, f"{key}[{index}]")
+            if not valid:
+                return False, reason
+    operating_mode = payload.get("operatingMode")
+    if operating_mode is not None and not isinstance(operating_mode, dict):
+        return False, "Workflow brief operatingMode must be an object."
     return True, None
+
+
+def validate_brief_item(item: dict[str, Any], path: str) -> tuple[bool, str | None]:
+    for key in ("title", "action", "why"):
+        if not isinstance(item.get(key), str) or not item[key].strip():
+            return False, f"Workflow brief {path}.{key} must be a non-empty string."
+    if path == "now" and (
+        not isinstance(item.get("confidence"), str) or not item["confidence"].strip()
+    ):
+        return False, "Workflow brief now.confidence must be a non-empty string."
+    if "confidence" in item and not isinstance(item["confidence"], str):
+        return False, f"Workflow brief {path}.confidence must be a string."
+    for key in ("evidence", "commands", "blockedBy"):
+        if key in item and not isinstance(item[key], list):
+            return False, f"Workflow brief {path}.{key} must be an array."
+    return True, None
+
+
+def summarize_project_focus(tickets: list[Any]) -> list[dict[str, Any]]:
+    summaries: dict[str, dict[str, Any]] = {}
+    for ticket in tickets:
+        if not isinstance(ticket, dict):
+            continue
+        project_name = str(ticket.get("projectName") or "No project")
+        summary = summaries.setdefault(
+            project_name,
+            {
+                "active": 0,
+                "backlog": 0,
+                "completed": 0,
+                "highPriority": 0,
+                "latestUpdatedAt": None,
+                "name": project_name,
+                "review": 0,
+            },
+        )
+        state_type = ticket.get("stateType")
+        state_name = str(ticket.get("stateName") or "").lower()
+        if state_type == "completed":
+            summary["completed"] += 1
+        elif state_type == "backlog" or state_type == "unstarted":
+            summary["backlog"] += 1
+        elif "review" in state_name:
+            summary["review"] += 1
+        else:
+            summary["active"] += 1
+        if ticket.get("priority") in (1, 2):
+            summary["highPriority"] += 1
+        updated_at = ticket.get("updatedAt")
+        if isinstance(updated_at, str) and (
+            not summary["latestUpdatedAt"] or updated_at > summary["latestUpdatedAt"]
+        ):
+            summary["latestUpdatedAt"] = updated_at
+    return sorted(
+        summaries.values(),
+        key=lambda item: str(item.get("latestUpdatedAt") or ""),
+        reverse=True,
+    )
 
 
 def brief_age_seconds(payload: dict[str, Any]) -> int | None:

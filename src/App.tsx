@@ -27,6 +27,7 @@ import type {
   TicketRow,
   TmuxWindowSummary,
   WorkflowBrief,
+  WorkflowBriefItem,
   WorkflowBriefResponse,
   WorkflowActionRequest,
   WorkflowActionResponse,
@@ -140,6 +141,32 @@ type ProjectPlanSection = {
 type ProjectPlan = {
   summary: string;
   sections: Array<ProjectPlanSection>;
+};
+
+type ParallelLaneRole = 'cleanup' | 'focus' | 'parallel' | 'waiting' | 'watch';
+
+type ParallelLane = {
+  action: string;
+  automation: string;
+  detail: string;
+  evidence: Array<string>;
+  id: string;
+  meta: string;
+  parallelSafe: boolean;
+  role: ParallelLaneRole;
+  source: 'brief' | 'live';
+  status: string;
+  title: string;
+  tone: WorkflowTone;
+  workflowId: string | null;
+};
+
+type ParallelPlan = {
+  lanes: Array<ParallelLane>;
+  maxActive: number;
+  recommendedActive: number;
+  source: 'brief' | 'live';
+  summary: string;
 };
 
 type CommandSummary = {
@@ -324,6 +351,17 @@ export function App() {
         : null,
     [dashboard, selectedWorkflow, visibleWorkflows, workflows],
   );
+  const parallelPlan = useMemo(
+    () =>
+      dashboard
+        ? buildParallelPlan({
+            brief: workflowBrief,
+            selectedWorkflow,
+            workflows,
+          })
+        : null,
+    [dashboard, selectedWorkflow, workflowBrief, workflows],
+  );
   const commandSummary = useMemo(
     () =>
       buildCommandSummary({
@@ -375,7 +413,7 @@ export function App() {
           <span className="brand-sigil">tb</span>
           <span>
             <strong>Ticketboard</strong>
-            <em>one move at a time</em>
+            <em>one focus, many lanes</em>
           </span>
         </a>
         <div className="topbar-actions">
@@ -448,6 +486,7 @@ export function App() {
                 onQueryChange={setQuery}
                 onRestoreSkipped={handleRestoreSkipped}
                 onSelect={setSelectedWorkflowId}
+                parallelPlan={parallelPlan}
                 plan={projectPlan}
                 query={query}
                 selectedWorkflowId={selectedWorkflow.id}
@@ -515,10 +554,13 @@ function buildCommandSummary({
   );
 
   if (brief && briefAppliesToWorkflow(brief, selectedWorkflow)) {
+    const laneCount = brief.lanes?.length ?? 0;
     return {
       description: brief.now.why,
       status: brief.now.action,
-      title: 'Codex brief is driving this move.',
+      title: laneCount > 1
+        ? `Codex brief is coordinating ${laneCount} lanes.`
+        : 'Codex brief is driving this move.',
       tone: selectedWorkflow.tone,
     };
   }
@@ -1000,6 +1042,7 @@ function ProjectPlanRail({
   onQueryChange,
   onRestoreSkipped,
   onSelect,
+  parallelPlan,
   plan,
   query,
   selectedWorkflowId,
@@ -1013,6 +1056,7 @@ function ProjectPlanRail({
   onQueryChange: (query: string) => void;
   onRestoreSkipped: () => void;
   onSelect: (id: string) => void;
+  parallelPlan: ParallelPlan | null;
   plan: ProjectPlan;
   query: string;
   selectedWorkflowId: string;
@@ -1039,6 +1083,14 @@ function ProjectPlanRail({
         plan={plan}
         selectedWorkflowId={selectedWorkflowId}
       />
+
+      {parallelPlan ? (
+        <ParallelLanesPanel
+          onSelect={onSelect}
+          plan={parallelPlan}
+          selectedWorkflowId={selectedWorkflowId}
+        />
+      ) : null}
 
       <details className="plan-disclosure">
         <summary>Open full live plan</summary>
@@ -1175,6 +1227,95 @@ function PlanDigestItem({
 
   return (
     <span className={className} data-plan-digest-item={item.id}>
+      {content}
+    </span>
+  );
+}
+
+function ParallelLanesPanel({
+  onSelect,
+  plan,
+  selectedWorkflowId,
+}: {
+  onSelect: (id: string) => void;
+  plan: ParallelPlan;
+  selectedWorkflowId: string;
+}) {
+  if (!plan.lanes.length) return null;
+
+  return (
+    <section className="parallel-lanes" data-parallel-lanes={plan.source}>
+      <div className="parallel-head">
+        <span className="section-kicker">Parallel lanes</span>
+        <p>{plan.summary}</p>
+        <div className="parallel-capacity" aria-label="Parallel workflow capacity">
+          <span>
+            <strong>{plan.recommendedActive}</strong>
+            active
+          </span>
+          <span>
+            <strong>{plan.maxActive}</strong>
+            max
+          </span>
+        </div>
+      </div>
+
+      <div className="parallel-lane-list">
+        {plan.lanes.slice(0, 6).map((lane) => (
+          <ParallelLaneRow
+            key={lane.id}
+            lane={lane}
+            onSelect={onSelect}
+            selectedWorkflowId={selectedWorkflowId}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ParallelLaneRow({
+  lane,
+  onSelect,
+  selectedWorkflowId,
+}: {
+  lane: ParallelLane;
+  onSelect: (id: string) => void;
+  selectedWorkflowId: string;
+}) {
+  const content = (
+    <>
+      <span className={`parallel-role parallel-role-${lane.role}`}>
+        {laneRoleLabel(lane.role)}
+      </span>
+      <span className="parallel-lane-copy">
+        <strong>{lane.title}</strong>
+        <small>{lane.action}</small>
+        <em>{lane.detail}</em>
+      </span>
+      <span className="parallel-lane-meta">
+        <b>{lane.automation}</b>
+        <i>{lane.parallelSafe ? 'safe with focus' : lane.status}</i>
+      </span>
+    </>
+  );
+
+  if (lane.workflowId) {
+    return (
+      <button
+        aria-pressed={lane.workflowId === selectedWorkflowId}
+        className={`parallel-lane parallel-lane-${lane.tone}`}
+        data-parallel-lane={lane.id}
+        onClick={() => onSelect(lane.workflowId as string)}
+        type="button"
+      >
+        {content}
+      </button>
+    );
+  }
+
+  return (
+    <span className={`parallel-lane parallel-lane-${lane.tone}`} data-parallel-lane={lane.id}>
       {content}
     </span>
   );
@@ -1500,27 +1641,7 @@ function workflowIdFromBrief(
   workflows: Array<WorkflowItem>,
 ): string | null {
   if (!brief) return null;
-  const explicitWorkflowId = brief.now.workflowId?.trim();
-  if (explicitWorkflowId && workflows.some((workflow) => workflow.id === explicitWorkflowId)) {
-    return explicitWorkflowId;
-  }
-
-  const ticketId = brief.now.ticketId?.trim().toUpperCase();
-  if (ticketId) {
-    const ticketWorkflow = workflows.find(
-      (workflow) => workflow.ticket?.ticketId === ticketId,
-    );
-    if (ticketWorkflow) return ticketWorkflow.id;
-  }
-
-  if (typeof brief.now.prNumber === 'number') {
-    const prWorkflow = workflows.find((workflow) =>
-      workflow.prs.some((pr) => pr.number === brief.now.prNumber),
-    );
-    if (prWorkflow) return prWorkflow.id;
-  }
-
-  return null;
+  return workflowIdFromBriefItem(brief.now, workflows);
 }
 
 function briefAppliesToWorkflow(
@@ -1554,6 +1675,222 @@ function joinSentenceParts(parts: Array<string>) {
     .map((part) => part.trim().replace(/[.;\s]+$/u, ''))
     .filter(Boolean);
   return cleaned.length ? `${cleaned.join('; ')}.` : '';
+}
+
+function buildParallelPlan({
+  brief,
+  selectedWorkflow,
+  workflows,
+}: {
+  brief: WorkflowBrief | null;
+  selectedWorkflow: WorkflowItem | null;
+  workflows: Array<WorkflowItem>;
+}): ParallelPlan {
+  const briefLanes = brief?.lanes ?? [];
+  if (briefLanes.length) {
+    const lanes = briefLanes
+      .slice(0, 8)
+      .map((lane, index) => parallelLaneFromBrief(lane, index, workflows));
+    const recommendedActive =
+      boundedLaneCount(brief?.operatingMode?.recommendedActiveLanes) ??
+      Math.min(2, lanes.filter((lane) => lane.role !== 'waiting').length || 1);
+    const maxActive =
+      boundedLaneCount(brief?.operatingMode?.maxActiveLanes) ??
+      Math.max(recommendedActive, 3);
+    return {
+      lanes,
+      maxActive,
+      recommendedActive,
+      source: 'brief',
+      summary:
+        brief?.operatingMode?.summary ||
+        parallelPlanSummary({ lanes, source: 'brief' }),
+    };
+  }
+
+  const selectedId = selectedWorkflow?.id ?? null;
+  const lanes: Array<ParallelLane> = [];
+  if (selectedWorkflow) {
+    lanes.push(parallelLaneFromWorkflow(selectedWorkflow, 'focus'));
+  }
+  const parallelCandidates = workflows
+    .filter((workflow) => workflow.id !== selectedId)
+    .filter((workflow) => ['fix-ci', 'review', 'resume', 'ship', 'start'].includes(workflow.intent))
+    .slice(0, 4)
+    .map((workflow) => parallelLaneFromWorkflow(workflow, roleForParallelWorkflow(workflow)));
+  const cleanupCandidates = workflows
+    .filter((workflow) => workflow.id !== selectedId)
+    .filter((workflow) => workflow.intent === 'clean' || workflow.intent === 'watch')
+    .slice(0, 2)
+    .map((workflow) => parallelLaneFromWorkflow(workflow, roleForParallelWorkflow(workflow)));
+  lanes.push(...parallelCandidates, ...cleanupCandidates);
+
+  const recommendedActive = Math.min(
+    2,
+    Math.max(1, lanes.filter((lane) => lane.role === 'focus' || lane.role === 'parallel').length),
+  );
+  return {
+    lanes: lanes.slice(0, 6),
+    maxActive: Math.max(3, recommendedActive),
+    recommendedActive,
+    source: 'live',
+    summary: parallelPlanSummary({ lanes, source: 'live' }),
+  };
+}
+
+function parallelLaneFromBrief(
+  item: NonNullable<WorkflowBrief['lanes']>[number],
+  index: number,
+  workflows: Array<WorkflowItem>,
+): ParallelLane {
+  const workflowId = workflowIdFromBriefItem(item, workflows);
+  const workflow = workflowId
+    ? workflows.find((candidate) => candidate.id === workflowId) ?? null
+    : null;
+  const role = normalizeLaneRole(item.role, index);
+  const automation = item.automation || (workflow ? automationForWorkflow(workflow, role) : 'Manual handoff');
+  const title = readableTitle(item.title || workflow?.title);
+  return {
+    action: readableSentence(item.action || workflow?.nextStep || 'Decide the next move.'),
+    automation,
+    detail: readableSentence(item.why || item.finishedWhen || workflow?.reason || ''),
+    evidence: item.evidence?.filter(Boolean).slice(0, 4) ?? workflow?.evidence.slice(0, 4) ?? [],
+    id: item.laneId || workflowId || `${role}:${index}:${title}`,
+    meta: item.confidence ? `${item.confidence} confidence` : laneRoleLabel(role),
+    parallelSafe: item.parallelSafe ?? role === 'parallel',
+    role,
+    source: 'brief',
+    status: item.status || item.handoffWhen || item.finishedWhen || laneRoleLabel(role),
+    title,
+    tone: workflow?.tone ?? toneForLaneRole(role),
+    workflowId,
+  };
+}
+
+function parallelLaneFromWorkflow(
+  workflow: WorkflowItem,
+  role: ParallelLaneRole,
+): ParallelLane {
+  const parallelSafe = role === 'parallel' && workflow.sessions.length === 0;
+  return {
+    action: workflow.nextStep,
+    automation: automationForWorkflow(workflow, role),
+    detail: workflow.reason,
+    evidence: workflow.evidence.slice(0, 4),
+    id: `${role}:${workflow.id}`,
+    meta: INTENT_LABELS[workflow.intent],
+    parallelSafe,
+    role,
+    source: 'live',
+    status: workflow.eyebrow,
+    title: workflow.title,
+    tone: workflow.tone,
+    workflowId: workflow.id,
+  };
+}
+
+function workflowIdFromBriefItem(
+  item: Partial<Pick<WorkflowBriefItem, 'prNumber' | 'ticketId' | 'workflowId'>>,
+  workflows: Array<WorkflowItem>,
+) {
+  const explicitWorkflowId = item.workflowId?.trim();
+  if (explicitWorkflowId && workflows.some((workflow) => workflow.id === explicitWorkflowId)) {
+    return explicitWorkflowId;
+  }
+
+  const ticketId = item.ticketId?.trim().toUpperCase();
+  if (ticketId) {
+    const ticketWorkflow = workflows.find(
+      (workflow) => workflow.ticket?.ticketId === ticketId,
+    );
+    if (ticketWorkflow) return ticketWorkflow.id;
+  }
+
+  if (typeof item.prNumber === 'number') {
+    const prWorkflow = workflows.find((workflow) =>
+      workflow.prs.some((pr) => pr.number === item.prNumber),
+    );
+    if (prWorkflow) return prWorkflow.id;
+  }
+
+  return explicitWorkflowId || null;
+}
+
+function normalizeLaneRole(
+  value: string | undefined,
+  index: number,
+): ParallelLaneRole {
+  if (
+    value === 'cleanup' ||
+    value === 'focus' ||
+    value === 'parallel' ||
+    value === 'waiting' ||
+    value === 'watch'
+  ) {
+    return value;
+  }
+  return index === 0 ? 'focus' : 'parallel';
+}
+
+function roleForParallelWorkflow(workflow: WorkflowItem): ParallelLaneRole {
+  if (workflow.intent === 'clean') return 'cleanup';
+  if (workflow.intent === 'watch') return 'watch';
+  if (workflow.intent === 'ship' || workflow.intent === 'review') return 'waiting';
+  return 'parallel';
+}
+
+function automationForWorkflow(workflow: WorkflowItem, role: ParallelLaneRole) {
+  if (role === 'cleanup') return 'Cleanup lane';
+  if (role === 'watch') return 'Watch only';
+  if (workflow.sessions.some((session) => session.status === 'goal-active' || session.status === 'running')) {
+    return 'Resume Codex';
+  }
+  if (workflow.intent === 'ship' || workflow.intent === 'review') return 'Human checkpoint';
+  if (workflow.intent === 'start') return 'Start Codex lane';
+  if (workflow.intent === 'fix-ci') return 'Codex fix lane';
+  return 'Codex handoff';
+}
+
+function toneForLaneRole(role: ParallelLaneRole): WorkflowTone {
+  if (role === 'cleanup' || role === 'waiting') return 'warn';
+  if (role === 'parallel') return 'calm';
+  if (role === 'focus') return 'hot';
+  return 'calm';
+}
+
+function laneRoleLabel(role: ParallelLaneRole) {
+  const labels: Record<ParallelLaneRole, string> = {
+    cleanup: 'Cleanup',
+    focus: 'Focus',
+    parallel: 'Parallel',
+    waiting: 'Waiting',
+    watch: 'Watch',
+  };
+  return labels[role];
+}
+
+function boundedLaneCount(value: number | undefined) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return Math.max(1, Math.min(6, Math.round(value)));
+}
+
+function parallelPlanSummary({
+  lanes,
+  source,
+}: {
+  lanes: Array<ParallelLane>;
+  source: ParallelPlan['source'];
+}) {
+  const parallelCount = lanes.filter((lane) => lane.role === 'parallel').length;
+  const waitingCount = lanes.filter((lane) => lane.role === 'waiting').length;
+  const cleanupCount = lanes.filter((lane) => lane.role === 'cleanup').length;
+  const prefix = source === 'brief' ? 'Codex sees' : 'Live signals show';
+  const parts = [
+    parallelCount ? `${moveCount(parallelCount, 'parallel lane')}` : 'no extra parallel lane',
+    waitingCount ? `${moveCount(waitingCount, 'waiting checkpoint')}` : '',
+    cleanupCount ? `${moveCount(cleanupCount, 'cleanup lane')}` : '',
+  ].filter(Boolean);
+  return `${prefix} ${parts.join('; ')}.`;
 }
 
 function buildProjectPlan({

@@ -1,6 +1,7 @@
 /* global fetch */
 
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -28,13 +29,15 @@ if (!response.ok) {
 const payload = await response.json();
 const snapshotPath = payload.path;
 const briefPath = payload.briefPath;
+const evidenceFingerprint = payload.fingerprint ?? stableFingerprint(payload.snapshot ?? {});
 
 if (!snapshotPath || !briefPath) {
   throw new Error('Evidence snapshot response is missing path or briefPath');
 }
 
 const promptPath = snapshotPath.replace(/\.json$/, '.prompt.md');
-const prompt = buildPrompt({ briefPath, snapshotPath });
+const fingerprintPath = fingerprintPathFor(briefPath);
+const prompt = buildPrompt({ briefPath, evidenceFingerprint, snapshotPath });
 mkdirSync(dirname(promptPath), { recursive: true });
 writeFileSync(promptPath, prompt);
 
@@ -42,6 +45,8 @@ if (dryRun) {
   console.log(JSON.stringify({
     briefPath,
     codexCommand: [codexBin, ...codexArgs, '--cd', process.cwd(), '<prompt>'],
+    evidenceFingerprint,
+    fingerprintPath,
     promptPath,
     snapshotPath,
   }, null, 2));
@@ -59,6 +64,13 @@ if (result.status !== 0) {
   process.exit(result.status ?? 1);
 }
 
+writeFingerprintRecord({
+  briefPath,
+  evidenceFingerprint,
+  fingerprintPath,
+  snapshotPath,
+  status: 'generated',
+});
 console.log(`Workflow brief written to ${briefPath}`);
 
 function buildCodexArgs() {
@@ -76,7 +88,7 @@ function buildCodexArgs() {
   return ['--yolo', ...explicitArgs];
 }
 
-function buildPrompt({ briefPath, snapshotPath }) {
+function buildPrompt({ briefPath, evidenceFingerprint, snapshotPath }) {
   return `You are the local Ticketboard workflow brief automation.
 
 Read this evidence snapshot:
@@ -89,7 +101,7 @@ Before deciding, verify the live tmux state directly:
 Do not edit source files. Only write the workflow brief JSON file below:
 ${briefPath}
 
-Choose exactly one immediate "now" move. Prefer live failing checks, active tmux/worktree lanes, and review state over quiet strategic backlog. If the plan doc says one thing but live evidence says another, explain the mismatch in staleSignals or notes.
+Model this like Henry's daily engineering workflow: several Codex/tmux lanes may be active at once, but only one lane should own focus. Choose exactly one immediate "now" focus move, then build a parallel lane plan for the other work that can proceed, wait, or be cleaned up. Prefer live failing checks, active tmux/worktree lanes, and review state over quiet strategic backlog. If Linear projects/docs imply one sequence but live PR/tmux evidence says another, explain the mismatch in staleSignals or notes.
 
 Write JSON matching this schema:
 {
@@ -97,8 +109,15 @@ Write JSON matching this schema:
   "generatedAt": "<ISO timestamp>",
   "source": {
     "evidenceSnapshotPath": "${snapshotPath}",
+    "evidenceFingerprint": "${evidenceFingerprint}",
     "dashboardGeneratedAt": "<from snapshot>",
     "planDocPath": "<from snapshot planDoc.path or null>"
+  },
+  "operatingMode": {
+    "summary": "One sentence describing how to run the next hour of work",
+    "recommendedActiveLanes": 2,
+    "maxActiveLanes": 3,
+    "rationale": "Why this much parallelism is safe"
   },
   "now": {
     "workflowId": "ticket:PHO-12345",
@@ -117,6 +136,25 @@ Write JSON matching this schema:
     ],
     "finishedWhen": "Concrete finish condition"
   },
+  "lanes": [
+    {
+      "laneId": "focus:PHO-12345",
+      "role": "focus|parallel|waiting|cleanup|watch",
+      "workflowId": "ticket:PHO-12345",
+      "ticketId": "PHO-12345",
+      "prNumber": 12345,
+      "title": "Short lane title",
+      "action": "Specific next action",
+      "why": "Why this lane belongs in the operating plan",
+      "confidence": "high|medium|low",
+      "automation": "Resume Codex|Start Codex lane|Human checkpoint|Watch only|Cleanup lane",
+      "parallelSafe": true,
+      "status": "Current lane state",
+      "handoffWhen": "When to stop or refresh this lane",
+      "blockedBy": [],
+      "evidence": []
+    }
+  ],
   "next": [
     {
       "workflowId": "ticket:PHO-12346",
@@ -136,8 +174,94 @@ Write JSON matching this schema:
 Rules:
 - Output valid JSON only in ${briefPath}; no markdown wrapper.
 - workflowId should match Ticketboard when possible: ticket:<ticketId>, pr:<number>, session:<threadId>, or worktree:<path>.
+- lanes must include the focus lane and should include useful parallel/waiting/cleanup lanes when live evidence supports them.
+- Mark parallelSafe true only when the lane can run without depending on or overwriting the focus lane.
 - Keep every title/action/why short enough to scan.
 - Evidence must cite actual snapshot or tmux observations.
 - Do not invent PR state, check state, tickets, or tmux windows.
 `;
+}
+
+function fingerprintPathFor(briefPath) {
+  const configured = process.env.TICKETBOARD_WORKFLOW_FINGERPRINT_PATH?.trim();
+  if (configured) {
+    return expandHome(configured);
+  }
+  return `${briefPath}.fingerprint.json`;
+}
+
+function writeFingerprintRecord({
+  briefPath,
+  evidenceFingerprint,
+  fingerprintPath,
+  snapshotPath,
+  status,
+}) {
+  mkdirSync(dirname(fingerprintPath), { recursive: true });
+  writeFileSync(
+    fingerprintPath,
+    JSON.stringify(
+      {
+        version: 1,
+        briefPath,
+        evidenceFingerprint,
+        snapshotPath,
+        status,
+        updatedAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+function stableFingerprint(value) {
+  return createHash('sha256')
+    .update(JSON.stringify(sortStable(stripVolatile(value))))
+    .digest('hex');
+}
+
+function stripVolatile(value) {
+  if (Array.isArray(value)) {
+    return value.map(stripVolatile);
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+  const next = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (
+      key === 'generatedAt'
+      || key === 'dashboardGeneratedAt'
+      || key === 'tmuxPanePreviews'
+    ) {
+      continue;
+    }
+    next[key] = stripVolatile(child);
+  }
+  return next;
+}
+
+function sortStable(value) {
+  if (Array.isArray(value)) {
+    return value.map(sortStable);
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => [key, sortStable(child)]),
+  );
+}
+
+function expandHome(path) {
+  if (path === '~') {
+    return process.env.HOME ?? path;
+  }
+  if (path.startsWith('~/')) {
+    return `${process.env.HOME ?? '~'}${path.slice(1)}`;
+  }
+  return path;
 }

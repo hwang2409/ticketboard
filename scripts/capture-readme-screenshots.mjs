@@ -244,6 +244,39 @@ function mockWorkflowBrief() {
     ageSeconds: 42,
     brief: {
       generatedAt: new Date().toISOString(),
+      lanes: [
+        {
+          action: 'Fix the failing checkout retry check.',
+          automation: 'Resume Codex',
+          confidence: 'high',
+          evidence: ['PR #128 has one failing check.'],
+          handoffWhen: 'Checks are green or the blocker is captured.',
+          laneId: 'focus:APP-214',
+          parallelSafe: false,
+          prNumber: 128,
+          role: 'focus',
+          status: 'Active terminal lane',
+          ticketId: 'APP-214',
+          title: 'Checkout retry loop',
+          why: 'This is the live interruption and owns focus.',
+          workflowId: 'ticket:APP-214',
+        },
+        {
+          action: 'Create the first implementation lane.',
+          automation: 'Start Codex lane',
+          confidence: 'medium',
+          evidence: ['APP-219 has no live lane yet.'],
+          handoffWhen: 'A branch exists with a first change or blocker.',
+          laneId: 'parallel:APP-219',
+          parallelSafe: true,
+          role: 'parallel',
+          status: 'Ready to start',
+          ticketId: 'APP-219',
+          title: 'Capability gate',
+          why: 'It can proceed independently after the checkout lane is stable.',
+          workflowId: 'ticket:APP-219',
+        },
+      ],
       next: [
         {
           action: 'Prepare the capability-gate slice after checkout is stable.',
@@ -273,6 +306,12 @@ function mockWorkflowBrief() {
         workflowId: 'ticket:APP-214',
       },
       notes: ['Demo data is sanitized for README screenshots.'],
+      operatingMode: {
+        maxActiveLanes: 3,
+        rationale: 'One focused fix lane plus one independent starter lane is safe.',
+        recommendedActiveLanes: 2,
+        summary: 'Keep checkout as focus; prepare one independent lane behind it.',
+      },
       source: {
         dashboardGeneratedAt: new Date().toISOString(),
         evidenceSnapshotPath: '/Users/you/.codex/ticketboard/workflow-evidence-snapshot.json',

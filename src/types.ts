@@ -417,6 +417,17 @@ export type WorkflowBriefItem = {
   finishedWhen?: string;
 };
 
+export type WorkflowBriefLane = WorkflowBriefItem & {
+  laneId?: string;
+  role?: 'cleanup' | 'focus' | 'parallel' | 'waiting' | 'watch' | string;
+  automation?: string;
+  parallelSafe?: boolean;
+  blockedBy?: Array<string>;
+  handoffWhen?: string;
+  owner?: string;
+  status?: string;
+};
+
 export type WorkflowBrief = {
   version: 1;
   generatedAt: string;
@@ -425,7 +436,14 @@ export type WorkflowBrief = {
     evidenceSnapshotPath?: string;
     planDocPath?: string | null;
   };
+  operatingMode?: {
+    summary?: string;
+    recommendedActiveLanes?: number;
+    maxActiveLanes?: number;
+    rationale?: string;
+  };
   now: WorkflowBriefItem;
+  lanes?: Array<WorkflowBriefLane>;
   next?: Array<WorkflowBriefItem>;
   blocked?: Array<WorkflowBriefItem>;
   staleSignals?: Array<WorkflowBriefItem>;

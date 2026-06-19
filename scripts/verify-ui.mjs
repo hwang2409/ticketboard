@@ -107,6 +107,12 @@ async function verifyViewport({ width, height, screenshot }) {
     if (workflowBrief.status === 'ready') {
       await page.waitForSelector('[data-testid="workflow-brief"]', { timeout: 10_000 });
       await assertWorkflowBriefSelection(page, workflowBrief);
+      if (Array.isArray(workflowBrief.brief?.lanes) && workflowBrief.brief.lanes.length) {
+        await page.waitForSelector('[data-parallel-lanes]', { timeout: 10_000 });
+        if ((await page.locator('[data-parallel-lane]').count()) < 1) {
+          throw new Error('Expected workflow brief lanes to render in the parallel lane panel');
+        }
+      }
     }
     await assertApprovedGreenPrimaryIsNotReview(page, dashboard);
     await assertWorkflowEyebrow(page);
@@ -578,6 +584,14 @@ function validateWorkflowBriefShape(response) {
       typeof brief.now?.why !== 'string'
     ) {
       throw new Error('Expected ready workflow brief to include version, generatedAt, now.action, and now.why');
+    }
+    if (brief.lanes && !Array.isArray(brief.lanes)) {
+      throw new Error('Expected workflow brief lanes to be an array');
+    }
+    for (const [index, lane] of (brief.lanes ?? []).entries()) {
+      if (typeof lane.title !== 'string' || typeof lane.action !== 'string') {
+        throw new Error(`Expected workflow brief lane ${index} to include title and action`);
+      }
     }
   }
 }

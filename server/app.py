@@ -47,6 +47,7 @@ from .workflow_brief import (
     save_workflow_evidence_snapshot,
     workflow_brief_path,
     workflow_brief_status,
+    workflow_evidence_fingerprint,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -385,15 +386,21 @@ async def api_workflow_evidence_snapshot(
     request: Request,
     refresh: str | None = None,
     includePreviews: str | None = None,
+    fingerprintPreviews: str | None = None,
 ) -> Response:
     dashboard = await dashboard_for_brief(refresh == "1")
     snapshot = build_workflow_evidence_snapshot(settings, dashboard)
     if includePreviews == "1":
         snapshot["tmuxPanePreviews"] = await tmux_pane_previews_for_brief(dashboard)
+    fingerprint = workflow_evidence_fingerprint(
+        snapshot,
+        include_previews=fingerprintPreviews == "1",
+    )
     path = await asyncio.to_thread(save_workflow_evidence_snapshot, settings, snapshot)
     return json_response(
         {
             "briefPath": str(workflow_brief_path(settings)),
+            "fingerprint": fingerprint,
             "path": str(path),
             "snapshot": snapshot,
         },

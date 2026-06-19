@@ -2,7 +2,7 @@
 
 Ticketboard is a local dashboard for the daily software engineering loop: active tickets, pull requests, Codex sessions, tmux lanes, worktrees, and token usage in one place.
 
-It is designed to answer one question quickly: **what should I do next, and why?**
+It is designed to answer one question quickly: **what should own focus, what can run in parallel, and why?**
 
 ![Ticketboard workflow dashboard](docs/assets/ticketboard-workflows.png)
 
@@ -11,6 +11,7 @@ It is designed to answer one question quickly: **what should I do next, and why?
 ## What It Does
 
 - Picks one current workflow from live local and remote signals.
+- Builds a lane plan for focus work, parallel Codex candidates, waiting checkpoints, and cleanup.
 - Explains the selected move with evidence, latest signal, terminal context, and finish criteria.
 - Can focus an existing tmux lane, create a worktree, resume Codex, open a PR, or launch a new Codex lane.
 - Shows a generated project plan: done, current, next, cleanup, and stale signals.
@@ -23,8 +24,8 @@ Ticketboard keeps the browser thin. The backend gathers state, validates actions
 1. Local collectors read tmux windows, Codex sessions, git worktrees, GitHub PRs, Linear tickets, and cached state.
 2. A deterministic scorer builds a fallback workflow queue, so the app still works without any generated brief.
 3. The optional Codex automation exports an evidence snapshot from `/api/workflow-brief/evidence-snapshot`.
-4. Local Codex runs in `--yolo` mode, reads that snapshot, reasons over the current project state, and writes a structured JSON brief.
-5. The UI renders the Codex brief when it is fresh; otherwise it falls back to the deterministic queue.
+4. Local Codex runs in `--yolo` mode, reads that snapshot, reasons over focus plus safe parallel lanes, and writes a structured JSON brief.
+5. The UI renders the Codex brief when it is fresh; otherwise it falls back to deterministic focus/parallel/cleanup lanes.
 
 The app does not call LLM APIs or store model keys. GitHub and Linear enrichment can come from your local CLI/MCP setup; API keys are only needed if you want the backend collectors to call those services directly.
 
@@ -57,7 +58,7 @@ Run the guarded automation loop in a separate terminal or tmux lane:
 pnpm brief:watch
 ```
 
-`brief:watch` checks the current brief status, skips work while the brief is fresh, and runs one generator at a time using a local lock file. The default cadence is roughly 10 minutes. Use `--once` for a single check, `--force` to ignore freshness, or `--no-yolo` if you need Codex to ask for approvals.
+`brief:watch` checks the current brief status, skips work while the brief is fresh, and runs one generator at a time using a local lock file. When a brief is stale only because of age, the watcher compares a stable evidence fingerprint first; if nothing meaningful changed, it refreshes the existing brief without starting another Codex process. The default cadence is roughly 10 minutes. Use `--once` for a single check, `--force` to ignore freshness/fingerprints, `--rerun-on-preview-change` to include tmux pane previews in the fingerprint, or `--no-yolo` if you need Codex to ask for approvals.
 
 The generated brief is written to `TICKETBOARD_WORKFLOW_BRIEF_PATH`, then read by the dashboard on refresh. `TICKETBOARD_PLAN_DOC_PATH` is optional; when set, it adds one local planning document to the evidence snapshot, but the app does not hardcode any specific plan file.
 
@@ -77,6 +78,7 @@ Create `.env` from `.env.example` when you want local overrides. The defaults ar
 | `TICKETBOARD_PLAN_DOC_PATH` | Optional planning document included in Codex evidence snapshots. |
 | `TICKETBOARD_WORKFLOW_BRIEF_PATH` | JSON file written by local Codex and read by the app. |
 | `TICKETBOARD_WORKFLOW_SNAPSHOT_PATH` | Evidence snapshot written by Ticketboard for Codex. |
+| `TICKETBOARD_WORKFLOW_FINGERPRINT_PATH` | Optional sidecar path for the last evidence fingerprint used by Codex automation. |
 | `TICKETBOARD_WORKFLOW_BRIEF_TTL` | How long a generated brief is treated as fresh, in seconds. |
 | `TICKETBOARD_WORKFLOW_AUTOMATION_INTERVAL_MS` | Brief watcher cadence. Defaults to 10 minutes. |
 | `TICKETBOARD_WORKFLOW_AUTOMATION_RETRY_MS` | Retry delay after status/generation failures. |

@@ -1,10 +1,11 @@
-/* global fetch */
+/* global fetch, URLSearchParams */
 
 import { spawn } from 'node:child_process';
 import {
   closeSync,
   mkdirSync,
   openSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -47,6 +48,7 @@ const once = args.has('--once');
 const force = args.has('--force');
 const dryRun = args.has('--dry-run');
 const noYolo = args.has('--no-yolo');
+const rerunOnPreviewChange = args.has('--rerun-on-preview-change');
 const generatorScript = fileURLToPath(
   new URL('./generate-workflow-brief.mjs', import.meta.url),
 );
@@ -64,6 +66,7 @@ console.log(
     `interval=${formatDuration(intervalMs)}`,
     `retry=${formatDuration(retryMs)}`,
     noYolo ? 'codex yolo=disabled' : 'codex yolo=enabled',
+    rerunOnPreviewChange ? 'preview fingerprint=enabled' : 'preview fingerprint=disabled',
   ].join(' '),
 );
 
@@ -97,6 +100,42 @@ async function checkAndMaybeRun() {
     return waitMs;
   }
 
+  if (shouldSkipStaleBrief(status)) {
+    const decision = await unchangedEvidenceDecision(status);
+    if (decision.unchanged) {
+      if (dryRun) {
+        console.log(
+          `[brief:watch] evidence unchanged (${shortHash(decision.evidenceFingerprint)}); dry run would refresh existing brief without starting Codex`,
+        );
+      } else {
+        try {
+          refreshExistingBrief(status, decision);
+          writeFingerprintRecord({
+            briefPath: status.path,
+            evidenceFingerprint: decision.evidenceFingerprint,
+            fingerprintPath: decision.fingerprintPath,
+            snapshotPath: decision.snapshotPath,
+            status: 'refreshed',
+          });
+        } catch (error) {
+          console.error(
+            `[brief:watch] failed to refresh existing brief: ${errorMessage(error)}`,
+          );
+          return retryMs;
+        }
+        console.log(
+          `[brief:watch] evidence unchanged (${shortHash(decision.evidenceFingerprint)}); refreshed existing brief without starting Codex`,
+        );
+      }
+      return intervalMs;
+    }
+    if (decision.evidenceFingerprint) {
+      console.log(
+        `[brief:watch] evidence changed (${shortHash(decision.previousFingerprint)} -> ${shortHash(decision.evidenceFingerprint)})`,
+      );
+    }
+  }
+
   const lockPath = lockPathFor(status);
   const lock = acquireLock(lockPath);
   if (!lock.acquired) {
@@ -127,6 +166,24 @@ async function fetchBriefStatus() {
   return response.json();
 }
 
+async function fetchEvidenceSnapshot() {
+  const params = new URLSearchParams({
+    refresh: '1',
+    includePreviews: '0',
+  });
+  if (rerunOnPreviewChange) {
+    params.set('includePreviews', '1');
+    params.set('fingerprintPreviews', '1');
+  }
+  const response = await fetch(`${baseUrl}/api/workflow-brief/evidence-snapshot?${params}`, {
+    headers: { 'cache-control': 'no-cache' },
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+  }
+  return response.json();
+}
+
 function runReason(status) {
   if (force) return 'forced run requested';
   if (status.status !== 'ready') {
@@ -140,6 +197,75 @@ function runReason(status) {
     return `brief is ${formatDuration(ageSeconds * 1000)} old`;
   }
   return null;
+}
+
+function shouldSkipStaleBrief(status) {
+  return (
+    !force
+    && status.status === 'stale'
+    && typeof status.reason === 'string'
+    && status.reason.includes('older than the configured TTL')
+    && typeof status.path === 'string'
+    && status.brief
+  );
+}
+
+async function unchangedEvidenceDecision(status) {
+  try {
+    const payload = await fetchEvidenceSnapshot();
+    const evidenceFingerprint = payload.fingerprint;
+    const previous = readFingerprintRecord(fingerprintPathFor(status.path), status.brief);
+    const previousFingerprint = previous?.evidenceFingerprint;
+    return {
+      unchanged: Boolean(
+        evidenceFingerprint
+        && previousFingerprint
+        && evidenceFingerprint === previousFingerprint,
+      ),
+      dashboardGeneratedAt: payload.snapshot?.dashboardGeneratedAt,
+      evidenceFingerprint,
+      fingerprintPath: fingerprintPathFor(status.path),
+      previousFingerprint,
+      snapshotPath: payload.path,
+    };
+  } catch (error) {
+    console.error(`[brief:watch] evidence fingerprint check failed: ${errorMessage(error)}`);
+    return { unchanged: false };
+  }
+}
+
+function readFingerprintRecord(path, brief) {
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8'));
+    if (parsed && typeof parsed === 'object') {
+      return parsed;
+    }
+  } catch {
+    // Fall through to brief source metadata for briefs generated before sidecars.
+  }
+  const source = brief?.source;
+  if (
+    source
+    && typeof source === 'object'
+    && typeof source.evidenceFingerprint === 'string'
+  ) {
+    return { evidenceFingerprint: source.evidenceFingerprint };
+  }
+  return null;
+}
+
+function refreshExistingBrief(status, decision) {
+  const brief = JSON.parse(readFileSync(status.path, 'utf8'));
+  const source = brief.source && typeof brief.source === 'object' ? brief.source : {};
+  brief.generatedAt = new Date().toISOString();
+  brief.source = {
+    ...source,
+    dashboardGeneratedAt: decision.dashboardGeneratedAt ?? source.dashboardGeneratedAt ?? null,
+    evidenceFingerprint: decision.evidenceFingerprint,
+    evidenceSnapshotPath: decision.snapshotPath ?? source.evidenceSnapshotPath ?? null,
+    refreshedWithoutCodexAt: new Date().toISOString(),
+  };
+  writeFileSync(status.path, `${JSON.stringify(brief, null, 2)}\n`);
 }
 
 function acquireLock(path) {
@@ -234,6 +360,39 @@ function lockPathFor(status) {
   return '/tmp/ticketboard-workflow-brief.lock';
 }
 
+function fingerprintPathFor(briefPath) {
+  const configured = process.env.TICKETBOARD_WORKFLOW_FINGERPRINT_PATH?.trim();
+  if (configured) {
+    return expandHome(configured);
+  }
+  return `${expandHome(briefPath)}.fingerprint.json`;
+}
+
+function writeFingerprintRecord({
+  briefPath,
+  evidenceFingerprint,
+  fingerprintPath,
+  snapshotPath,
+  status,
+}) {
+  mkdirSync(dirname(fingerprintPath), { recursive: true });
+  writeFileSync(
+    fingerprintPath,
+    JSON.stringify(
+      {
+        version: 1,
+        briefPath,
+        evidenceFingerprint,
+        snapshotPath,
+        status,
+        updatedAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+  );
+}
+
 function readMs(argPrefix, envName, fallback, minimum) {
   const raw = argValue(argPrefix) ?? process.env[envName];
   const parsed = raw ? Number(raw) : fallback;
@@ -291,4 +450,11 @@ function formatDuration(ms) {
 
 function errorMessage(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function shortHash(value) {
+  if (!value || typeof value !== 'string') {
+    return 'unknown';
+  }
+  return value.slice(0, 12);
 }
