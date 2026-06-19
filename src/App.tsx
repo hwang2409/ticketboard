@@ -21,6 +21,7 @@ import type {
   CodexMessageSummary,
   CodexSessionSummary,
   DashboardData,
+  LinearLinkedIssueSummary,
   LinearTicketSummary,
   TokenUsageSummary,
   PullRequestSummary,
@@ -167,6 +168,22 @@ type ProjectPlanSection = {
 type ProjectPlan = {
   summary: string;
   sections: Array<ProjectPlanSection>;
+};
+
+type UnlockTone = 'blocked' | 'ready' | 'waiting';
+
+type UnlockItem = {
+  detail: string;
+  id: string;
+  meta: string;
+  title: string;
+  tone: UnlockTone;
+  workflowId: string | null;
+};
+
+type UnlockMap = {
+  items: Array<UnlockItem>;
+  summary: string;
 };
 
 type ParallelLaneRole = 'cleanup' | 'focus' | 'parallel' | 'waiting' | 'watch';
@@ -1270,6 +1287,12 @@ function ProjectPlanRail({
 
       <HandoffLedger handoffs={handoffs} onSelect={onSelect} />
 
+      <UnlockMapPanel
+        dashboard={dashboard}
+        onSelect={onSelect}
+        workflows={workflows}
+      />
+
       {parallelPlan ? (
         <ParallelLanesPanel
           dashboard={dashboard}
@@ -1453,6 +1476,62 @@ function HandoffLedger({
             <small>{handoffKindLabel(handoff.kind)} / {formatRelativeTime(handoff.ranAt)}</small>
           </button>
         ))}
+      </div>
+    </section>
+  );
+}
+
+function UnlockMapPanel({
+  dashboard,
+  onSelect,
+  workflows,
+}: {
+  dashboard: DashboardData;
+  onSelect: (id: string) => void;
+  workflows: Array<WorkflowItem>;
+}) {
+  const unlockMap = buildUnlockMap({ dashboard, workflows });
+
+  return (
+    <section className="unlock-map" data-unlock-map>
+      <div className="unlock-head">
+        <span className="section-kicker">Unlock map</span>
+        <small>{unlockMap.summary}</small>
+      </div>
+      <div className="unlock-list">
+        {unlockMap.items.length ? (
+          unlockMap.items.map((item) =>
+            item.workflowId ? (
+              <button
+                className={`unlock-item unlock-item-${item.tone}`}
+                data-unlock-item={item.id}
+                key={item.id}
+                onClick={() => onSelect(item.workflowId as string)}
+                type="button"
+              >
+                <span>
+                  <strong>{item.title}</strong>
+                  <em>{item.detail}</em>
+                </span>
+                <small>{item.meta}</small>
+              </button>
+            ) : (
+              <span
+                className={`unlock-item unlock-item-${item.tone}`}
+                data-unlock-item={item.id}
+                key={item.id}
+              >
+                <span>
+                  <strong>{item.title}</strong>
+                  <em>{item.detail}</em>
+                </span>
+                <small>{item.meta}</small>
+              </span>
+            ),
+          )
+        ) : (
+          <p>No explicit Linear blockers or PR gates are visible.</p>
+        )}
       </div>
     </section>
   );
@@ -2653,6 +2732,210 @@ function parallelPlanSummary({
     cleanupCount ? `${moveCount(cleanupCount, 'cleanup lane')}` : '',
   ].filter(Boolean);
   return `${prefix} ${parts.join('; ')}.`;
+}
+
+function buildUnlockMap({
+  dashboard,
+  workflows,
+}: {
+  dashboard: DashboardData;
+  workflows: Array<WorkflowItem>;
+}): UnlockMap {
+  const ticketWorkflows = workflowByTicketId(workflows);
+  const items: Array<UnlockItem> = [];
+  const seen = new Set<string>();
+
+  for (const ticket of dashboard.linearTickets) {
+    for (const relation of ticket.relatedIssues) {
+      const edge = unlockEdgeFromRelation(ticket, relation);
+      if (!edge) continue;
+      const blockerWorkflow = ticketWorkflows.get(edge.blocker.ticketId) ?? null;
+      const blockedWorkflow = ticketWorkflows.get(edge.blocked.ticketId) ?? null;
+      const blockerDone = isLinearIssueDone(edge.blocker);
+      const id = `linear:${edge.blocker.ticketId}:${edge.blocked.ticketId}:${edge.relationType}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      items.push({
+        detail: blockerDone
+          ? `${edge.blocker.ticketId} is done; ${edge.blocked.ticketId} can move next.`
+          : `${edge.blocker.ticketId} is ${edge.blocker.stateName || 'not done'}; finish it before ${edge.blocked.ticketId}.`,
+        id,
+        meta: relationLabel(edge.relationType),
+        title: `${edge.blocked.ticketId} waits on ${edge.blocker.ticketId}`,
+        tone: blockerDone ? 'ready' : 'blocked',
+        workflowId: blockerDone
+          ? blockedWorkflow?.id ?? blockerWorkflow?.id ?? null
+          : blockerWorkflow?.id ?? blockedWorkflow?.id ?? null,
+      });
+    }
+  }
+
+  for (const pr of dashboard.prs) {
+    const item = unlockItemFromPr(pr, workflows);
+    if (item && !seen.has(item.id)) {
+      seen.add(item.id);
+      items.push(item);
+    }
+  }
+
+  for (const ticket of dashboard.tickets) {
+    if (ticket.state !== 'blocked') continue;
+    const id = `ticket:${ticket.ticketId}:blocked`;
+    if (seen.has(id)) continue;
+    const workflow = ticketWorkflows.get(ticket.ticketId) ?? null;
+    items.push({
+      detail: ticket.nextAction,
+      id,
+      meta: ticket.risk === 'high' ? 'High risk' : 'Blocked',
+      title: `${ticket.ticketId} is blocked`,
+      tone: 'blocked',
+      workflowId: workflow?.id ?? null,
+    });
+  }
+
+  const sorted = items
+    .sort((left, right) => unlockToneRank(left.tone) - unlockToneRank(right.tone))
+    .slice(0, 4);
+
+  return {
+    items: sorted,
+    summary: sorted.length
+      ? `${moveCount(sorted.length, 'unlock checkpoint')} visible`
+      : 'No dependency blockers visible',
+  };
+}
+
+function workflowByTicketId(workflows: Array<WorkflowItem>) {
+  const byTicket = new Map<string, WorkflowItem>();
+  for (const workflow of workflows) {
+    const ticketIds = new Set([
+      workflow.ticket?.ticketId,
+      workflow.linearTicket?.ticketId,
+      ...workflow.prs.flatMap((pr) => pr.ticketIds),
+      ...workflow.sessions.flatMap((session) => session.ticketIds),
+      ...workflow.worktrees.flatMap((worktree) => worktree.ticketIds),
+      ...workflow.windows.flatMap((window) => window.ticketIds),
+    ]);
+    for (const ticketId of ticketIds) {
+      if (ticketId) byTicket.set(ticketId.toUpperCase(), workflow);
+    }
+  }
+  return byTicket;
+}
+
+function unlockEdgeFromRelation(
+  ticket: LinearTicketSummary,
+  relation: LinearTicketSummary['relatedIssues'][number],
+) {
+  const relationType = normalizeRelationType(relation.relationType);
+  const related = relation.issue;
+  if (!related?.ticketId) return null;
+  if (relationType === 'blocked_by' || relationType === 'blocks_this') {
+    return {
+      blocked: linearLinkForTicket(ticket),
+      blocker: related,
+      relationType,
+    };
+  }
+  if (relationType === 'blocks' || relationType === 'this_blocks') {
+    return {
+      blocked: related,
+      blocker: linearLinkForTicket(ticket),
+      relationType,
+    };
+  }
+  return null;
+}
+
+function normalizeRelationType(value: string | null | undefined) {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/gu, '_');
+  if (normalized === 'blocked' || normalized === 'blocked_by') return 'blocked_by';
+  if (normalized === 'blocks') return 'blocks';
+  return normalized;
+}
+
+function linearLinkForTicket(ticket: LinearTicketSummary) {
+  return {
+    stateName: ticket.stateName,
+    stateType: ticket.stateType,
+    ticketId: ticket.ticketId,
+    title: ticket.title,
+    url: ticket.url,
+  };
+}
+
+function isLinearIssueDone(issue: LinearLinkedIssueSummary) {
+  return issue.stateType === 'completed' || issue.stateType === 'canceled';
+}
+
+function relationLabel(value: string) {
+  if (value === 'blocked_by' || value === 'blocks_this') return 'Blocked by';
+  if (value === 'blocks' || value === 'this_blocks') return 'Blocks';
+  return readableTitle(value);
+}
+
+function unlockItemFromPr(
+  pr: PullRequestSummary,
+  workflows: Array<WorkflowItem>,
+): UnlockItem | null {
+  const workflow =
+    workflows.find((candidate) => candidate.prs.some((candidatePr) => candidatePr.number === pr.number)) ??
+    null;
+  const ticketLabel = pr.ticketIds[0] ?? `PR #${pr.number}`;
+  if (pr.checkSummary.state === 'red') {
+    return {
+      detail: `${moveCount(pr.checkSummary.failed, 'failing check')} must pass before this can ship.`,
+      id: `pr:${pr.number}:red`,
+      meta: 'Checks failing',
+      title: `PR #${pr.number} blocks ${ticketLabel}`,
+      tone: 'blocked',
+      workflowId: workflow?.id ?? null,
+    };
+  }
+  if (pr.reviewDecision === 'CHANGES_REQUESTED') {
+    return {
+      detail: 'Review changes are requested; resolve them before this unlocks.',
+      id: `pr:${pr.number}:changes-requested`,
+      meta: 'Review gate',
+      title: `PR #${pr.number} blocks ${ticketLabel}`,
+      tone: 'blocked',
+      workflowId: workflow?.id ?? null,
+    };
+  }
+  if (pr.checkSummary.state === 'pending') {
+    return {
+      detail: `${moveCount(pr.checkSummary.pending, 'pending check')} still running.`,
+      id: `pr:${pr.number}:pending`,
+      meta: 'Waiting',
+      title: `PR #${pr.number} is waiting`,
+      tone: 'waiting',
+      workflowId: workflow?.id ?? null,
+    };
+  }
+  if (
+    pr.checkSummary.state === 'green' &&
+    !pr.isDraft &&
+    (pr.reviewDecision === 'APPROVED' || pr.reviewDecision === null)
+  ) {
+    return {
+      detail: 'Checks are green and review is clear enough to ship or merge.',
+      id: `pr:${pr.number}:ready`,
+      meta: pr.reviewDecision === 'APPROVED' ? 'Approved' : 'Green',
+      title: `PR #${pr.number} can unlock ${ticketLabel}`,
+      tone: 'ready',
+      workflowId: workflow?.id ?? null,
+    };
+  }
+  return null;
+}
+
+function unlockToneRank(tone: UnlockTone) {
+  if (tone === 'blocked') return 0;
+  if (tone === 'waiting') return 1;
+  return 2;
 }
 
 function buildProjectPlan({

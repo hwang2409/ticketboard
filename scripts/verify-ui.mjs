@@ -107,6 +107,16 @@ async function verifyViewport({ width, height, screenshot }) {
     if ((await page.locator('[data-handoff-item]').count()) < 1) {
       throw new Error('Expected recent workflow handoffs to render');
     }
+    await page.waitForSelector('[data-unlock-map]', { timeout: 10_000 });
+    const hasUnlockSource =
+      dashboard.tickets.some((ticket) => ticket.state === 'blocked') ||
+      dashboard.prs.some((pr) => ['red', 'pending', 'green'].includes(pr.checkSummary?.state)) ||
+      dashboard.linearTickets.some((ticket) =>
+        ticket.relatedIssues?.some((relation) => /block/i.test(relation.relationType ?? '')),
+      );
+    if (hasUnlockSource && (await page.locator('[data-unlock-item]').count()) < 1) {
+      throw new Error('Expected unlock map to render dependency or PR gates');
+    }
     if ((await page.locator('.plan-disclosure [data-plan-item]:visible').count()) > 0) {
       throw new Error('Full live plan rows should be hidden by default');
     }

@@ -159,6 +159,18 @@ function mockDashboard() {
       }),
       mockLinearTicket({
         description: 'Replace the stale onboarding API in the next product slice.',
+        relatedIssues: [
+          {
+            issue: {
+              stateName: 'In Progress',
+              stateType: 'started',
+              ticketId: 'APP-214',
+              title: 'Fix checkout retry loop after payment timeout',
+              url: 'https://linear.app/acme/issue/APP-214',
+            },
+            relationType: 'blocked_by',
+          },
+        ],
         stateName: 'Backlog',
         stateType: 'unstarted',
         ticketId: 'APP-219',
@@ -421,7 +433,14 @@ function mockTokens() {
   };
 }
 
-function mockLinearTicket({ description, stateName, stateType, ticketId, title }) {
+function mockLinearTicket({
+  description,
+  relatedIssues = [],
+  stateName,
+  stateType,
+  ticketId,
+  title,
+}) {
   const now = new Date().toISOString();
   return {
     activity: [],
@@ -445,7 +464,7 @@ function mockLinearTicket({ description, stateName, stateType, ticketId, title }
     priority: 2,
     projectName: 'Product workflow',
     projectUrl: null,
-    relatedIssues: [],
+    relatedIssues,
     startedAt: stateType === 'started' ? now : null,
     stateName,
     stateType,

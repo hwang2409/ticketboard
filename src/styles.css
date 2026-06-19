@@ -1145,6 +1145,104 @@ button.plan-digest-item {
   text-align: right;
 }
 
+.unlock-map {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--surface);
+}
+
+.unlock-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.unlock-head small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.unlock-list {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.unlock-list > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.unlock-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: start;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--warning);
+  background: var(--surface-muted);
+  color: var(--foreground);
+  text-align: left;
+}
+
+button.unlock-item {
+  cursor: pointer;
+}
+
+button.unlock-item:hover,
+button.unlock-item:focus-visible {
+  border-color: var(--foreground);
+}
+
+.unlock-item span {
+  display: grid;
+  min-width: 0;
+  gap: 0.18rem;
+}
+
+.unlock-item strong,
+.unlock-item em,
+.unlock-item small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unlock-item strong {
+  font-size: 0.78rem;
+}
+
+.unlock-item em,
+.unlock-item small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.unlock-item small {
+  justify-self: end;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.unlock-item-blocked {
+  border-left-color: var(--danger);
+}
+
+.unlock-item-ready {
+  border-left-color: var(--green);
+}
+
 .parallel-lanes {
   display: grid;
   gap: 0.65rem;
@@ -2119,6 +2217,7 @@ button.plan-item {
 
   .parallel-head,
   .handoff-item,
+  .unlock-item,
   .parallel-lane,
   .parallel-lane-select {
     grid-template-columns: 1fr;
@@ -2164,6 +2263,17 @@ button.plan-item {
   }
 
   .handoff-item small {
+    justify-self: start;
+    text-align: left;
+  }
+
+  .unlock-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .unlock-head small,
+  .unlock-item small {
     justify-self: start;
     text-align: left;
   }
