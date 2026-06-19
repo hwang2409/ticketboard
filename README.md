@@ -64,7 +64,7 @@ Run the guarded automation loop in a separate terminal or tmux lane:
 pnpm brief:watch
 ```
 
-`brief:watch` checks the current brief status, skips work while the brief is fresh, and runs one generator at a time using a local lock file. When a brief is stale only because of age, the watcher compares a stable evidence fingerprint first; if nothing meaningful changed, it refreshes the existing brief without starting another Codex process. The default cadence is roughly 10 minutes. Use `--once` for a single check, `--force` to ignore freshness/fingerprints, `--rerun-on-preview-change` to include tmux pane previews in the fingerprint, or `--no-yolo` if you need Codex to ask for approvals.
+`brief:watch` checks the current brief status, skips work while the brief is fresh, and runs one generator at a time using a local lock file. When a brief is stale only because of age, the watcher compares a stable evidence fingerprint first; if nothing meaningful changed, it refreshes the existing brief without starting another Codex process. The generator uses non-interactive `codex exec`, so it can run under `make dev` without terminal stdin. The default cadence is roughly 10 minutes. Use `--once` for a single check, `--force` to ignore freshness/fingerprints, `--rerun-on-preview-change` to include tmux pane previews in the fingerprint, or `--no-yolo` if you need Codex to ask for approvals.
 
 The generated brief is written to `TICKETBOARD_WORKFLOW_BRIEF_PATH`, then read by the dashboard on refresh. `TICKETBOARD_PLAN_DOC_PATH` is optional; when set, it adds one local planning document to the evidence snapshot, but the app does not hardcode any specific plan file.
 

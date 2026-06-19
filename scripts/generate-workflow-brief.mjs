@@ -44,7 +44,7 @@ writeFileSync(promptPath, prompt);
 if (dryRun) {
   console.log(JSON.stringify({
     briefPath,
-    codexCommand: [codexBin, ...codexArgs, '--cd', process.cwd(), '<prompt>'],
+    codexCommand: [codexBin, 'exec', ...codexArgs, '--cd', process.cwd(), '-'],
     evidenceFingerprint,
     fingerprintPath,
     promptPath,
@@ -53,8 +53,9 @@ if (dryRun) {
   process.exit(0);
 }
 
-const result = spawnSync(codexBin, [...codexArgs, '--cd', process.cwd(), prompt], {
-  stdio: 'inherit',
+const result = spawnSync(codexBin, ['exec', ...codexArgs, '--cd', process.cwd(), '-'], {
+  input: prompt,
+  stdio: ['pipe', 'inherit', 'inherit'],
 });
 
 if (result.error) {
