@@ -95,6 +95,10 @@ async function verifyViewport({ width, height, screenshot }) {
     if ((await page.locator('[data-plan-digest-item]').count()) < 1) {
       throw new Error('Expected compact generated plan digest items');
     }
+    await page.waitForSelector('[data-handoff-ledger]', { timeout: 10_000 });
+    if ((await page.locator('[data-handoff-item]').count()) < 1) {
+      throw new Error('Expected recent workflow handoffs to render');
+    }
     if ((await page.locator('.plan-disclosure [data-plan-item]:visible').count()) > 0) {
       throw new Error('Full live plan rows should be hidden by default');
     }
@@ -209,7 +213,22 @@ async function verifyViewport({ width, height, screenshot }) {
 }
 
 async function mockUserStateRoutes(page) {
-  const state = { dismissed: {} };
+  const state = {
+    dismissed: {},
+    handoffs: [
+      {
+        command: 'tmux new-window ...',
+        id: 'verify-handoff',
+        kind: 'resume-codex',
+        message: 'Resumed Codex in tmux session phoebe.',
+        prNumber: null,
+        ranAt: new Date().toISOString(),
+        ticketId: 'PHO-000',
+        title: 'Resume current lane',
+        workflowId: 'ticket:PHO-000',
+      },
+    ],
+  };
   await page.route('**/api/user-state**', async (route) => {
     const request = route.request();
     const url = new globalThis.URL(request.url());
@@ -566,8 +585,13 @@ function validateTmuxAssociationsAreNarrow(dashboard) {
 }
 
 function validateUserStateShape(state) {
-  if (!state || typeof state !== 'object' || typeof state.dismissed !== 'object') {
-    throw new Error('Expected user-state response to include dismissed workflow map');
+  if (
+    !state ||
+    typeof state !== 'object' ||
+    typeof state.dismissed !== 'object' ||
+    !Array.isArray(state.handoffs)
+  ) {
+    throw new Error('Expected user-state response to include dismissed workflows and handoffs');
   }
 }
 

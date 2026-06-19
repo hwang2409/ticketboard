@@ -222,6 +222,7 @@ WORKFLOW_ACTION_KINDS = {
     "start-lane",
 }
 MAX_ACTION_PROMPT_CHARS = 16_000
+MAX_HANDOFF_EVENTS = 30
 
 
 @asynccontextmanager
@@ -671,11 +672,45 @@ def user_state_path() -> Path:
 
 def load_user_state() -> dict[str, Any]:
     data = load_json(user_state_path())
+    dismissed: dict[str, Any] = {}
+    handoffs: list[dict[str, Any]] = []
     if isinstance(data, dict):
-        dismissed = data.get("dismissed")
-        if isinstance(dismissed, dict):
-            return {"dismissed": dismissed}
-    return {"dismissed": {}}
+        raw_dismissed = data.get("dismissed")
+        if isinstance(raw_dismissed, dict):
+            dismissed = raw_dismissed
+        handoffs = normalize_handoff_events(data.get("handoffs"))
+    return {"dismissed": dismissed, "handoffs": handoffs}
+
+
+def normalize_handoff_events(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    handoffs: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        handoff_id = str(item.get("id") or "").strip()
+        workflow_id = str(item.get("workflowId") or "").strip()
+        message = str(item.get("message") or "").strip()
+        ran_at = str(item.get("ranAt") or "").strip()
+        if not handoff_id or not workflow_id or not message or not ran_at:
+            continue
+        handoffs.append(
+            {
+                "id": handoff_id,
+                "kind": str(item.get("kind") or "").strip(),
+                "workflowId": workflow_id,
+                "title": str(item.get("title") or "").strip(),
+                "ticketId": str(item.get("ticketId") or "").strip() or None,
+                "prNumber": (
+                    item.get("prNumber") if isinstance(item.get("prNumber"), int) else None
+                ),
+                "message": message,
+                "command": str(item.get("command") or "").strip(),
+                "ranAt": ran_at,
+            },
+        )
+    return handoffs[:MAX_HANDOFF_EVENTS]
 
 
 @app.get("/api/user-state")
@@ -713,11 +748,52 @@ async def api_user_state_undismiss(action_id: str) -> Response:
     return JSONResponse(state)
 
 
+def record_workflow_handoff(payload: dict[str, Any], result: dict[str, Any]) -> None:
+    if not result.get("ok") or result.get("dryRun"):
+        return
+    workflow_id = str(payload.get("workflowId") or "").strip()
+    kind = str(payload.get("kind") or "").strip()
+    message = str(result.get("message") or "").strip()
+    ran_at = str(result.get("ranAt") or utc_now_iso()).strip()
+    if not workflow_id or not kind or not message:
+        return
+
+    title = str(payload.get("title") or payload.get("ticketTitle") or workflow_id).strip()
+    ticket_id = optional_ticket_id(payload)
+    try:
+        pr_number = optional_pr_number(payload)
+    except Exception:
+        pr_number = None
+    entry = {
+        "id": f"{ran_at}:{workflow_id}:{kind}",
+        "kind": kind,
+        "workflowId": workflow_id,
+        "title": title,
+        "ticketId": ticket_id,
+        "prNumber": pr_number,
+        "message": message,
+        "command": str(result.get("command") or ""),
+        "ranAt": ran_at,
+    }
+    state = load_user_state()
+    previous = [
+        item
+        for item in normalize_handoff_events(state.get("handoffs"))
+        if item.get("id") != entry["id"]
+    ]
+    state["handoffs"] = [entry, *previous][:MAX_HANDOFF_EVENTS]
+    save_json(user_state_path(), state)
+
+
 @app.post("/api/workflow-action")
 async def api_workflow_action(payload: dict[str, Any], request: Request) -> Response:
     try:
         dashboard = await dashboard_for_action()
         result = await asyncio.to_thread(run_workflow_action, dashboard, payload)
+        try:
+            await asyncio.to_thread(record_workflow_handoff, payload, result)
+        except Exception:  # noqa: B110 - action success should not depend on ledger writes.
+            pass
         return json_response(result, request=request)
     except HTTPException:
         raise

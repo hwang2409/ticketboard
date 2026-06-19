@@ -71,8 +71,21 @@ type DismissedWorkflow = {
   until?: string | null;
 };
 
+type HandoffEvent = {
+  command?: string;
+  id: string;
+  kind: string;
+  message: string;
+  prNumber?: number | null;
+  ranAt: string;
+  ticketId?: string | null;
+  title: string;
+  workflowId: string;
+};
+
 type LocalState = {
   dismissed: Record<string, DismissedWorkflow>;
+  handoffs: Array<HandoffEvent>;
 };
 
 type ActionButtonState =
@@ -406,13 +419,18 @@ export function App() {
       }
       void refreshDashboard(true);
       void refreshWorkflowBrief(true);
+      void fetchUserState()
+        .then((serverState) => {
+          setLocalState((current) => mergeLocalState(current, serverState));
+        })
+        .catch(() => undefined);
     },
     [refreshDashboard, refreshWorkflowBrief],
   );
 
   const handleRestoreSkipped = useCallback(() => {
     const ids = Object.keys(localState.dismissed);
-    setLocalState({ dismissed: {} });
+    setLocalState((current) => ({ ...current, dismissed: {} }));
     void Promise.all(ids.map((id) => removeDismissedWorkflow(id))).catch(() => undefined);
   }, [localState.dismissed]);
 
@@ -490,6 +508,7 @@ export function App() {
               />
               <ProjectPlanRail
                 dashboard={dashboard}
+                handoffs={localState.handoffs}
                 hiddenCount={hiddenCount}
                 mode={mode}
                 modeCounts={modeCounts}
@@ -1048,6 +1067,7 @@ function InfoColumn({
 
 function ProjectPlanRail({
   dashboard,
+  handoffs,
   hiddenCount,
   mode,
   modeCounts,
@@ -1064,6 +1084,7 @@ function ProjectPlanRail({
   workflows,
 }: {
   dashboard: DashboardData;
+  handoffs: Array<HandoffEvent>;
   hiddenCount: number;
   mode: WorkflowMode;
   modeCounts: Record<WorkflowMode, number>;
@@ -1099,6 +1120,8 @@ function ProjectPlanRail({
         plan={plan}
         selectedWorkflowId={selectedWorkflowId}
       />
+
+      <HandoffLedger handoffs={handoffs} onSelect={onSelect} />
 
       {parallelPlan ? (
         <ParallelLanesPanel
@@ -1248,6 +1271,43 @@ function PlanDigestItem({
     <span className={className} data-plan-digest-item={item.id}>
       {content}
     </span>
+  );
+}
+
+function HandoffLedger({
+  handoffs,
+  onSelect,
+}: {
+  handoffs: Array<HandoffEvent>;
+  onSelect: (id: string) => void;
+}) {
+  const recent = handoffs.slice(0, 4);
+  if (!recent.length) return null;
+
+  return (
+    <section className="handoff-ledger" data-handoff-ledger>
+      <div className="handoff-head">
+        <span className="section-kicker">Recent handoffs</span>
+        <small>{moveCount(recent.length, 'event')}</small>
+      </div>
+      <div className="handoff-list">
+        {recent.map((handoff) => (
+          <button
+            className="handoff-item"
+            data-handoff-item={handoff.id}
+            key={handoff.id}
+            onClick={() => onSelect(handoff.workflowId)}
+            type="button"
+          >
+            <span>
+              <strong>{readableTitle(handoff.title || handoff.workflowId)}</strong>
+              <em>{handoff.message}</em>
+            </span>
+            <small>{handoffKindLabel(handoff.kind)} / {formatRelativeTime(handoff.ranAt)}</small>
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -2156,6 +2216,19 @@ function laneRoleLabel(role: ParallelLaneRole) {
     watch: 'Watch',
   };
   return labels[role];
+}
+
+function handoffKindLabel(kind: string) {
+  const labels: Record<string, string> = {
+    'focus-tmux': 'Focused',
+    'launch-codex': 'Started Codex',
+    'open-pr': 'Opened PR',
+    'open-url': 'Opened source',
+    'open-worktree': 'Opened worktree',
+    'resume-codex': 'Resumed Codex',
+    'start-lane': 'Started lane',
+  };
+  return labels[kind] ?? readableTitle(kind);
 }
 
 function boundedLaneCount(value: number | undefined) {
@@ -3357,11 +3430,15 @@ function latestTimestamp(values: Array<string | null | undefined>) {
 function readLocalState(): LocalState {
   try {
     const raw = window.localStorage.getItem(LOCAL_STATE_KEY);
-    if (!raw) return { dismissed: {} };
+    if (!raw) return emptyLocalState();
     return normalizeLocalState(JSON.parse(raw));
   } catch {
-    return { dismissed: {} };
+    return emptyLocalState();
   }
+}
+
+function emptyLocalState(): LocalState {
+  return { dismissed: {}, handoffs: [] };
 }
 
 function writeLocalState(state: LocalState) {
@@ -3382,6 +3459,7 @@ function activeSkippedIds(state: LocalState) {
 function dismissWorkflowInState(state: LocalState, id: string): LocalState {
   const now = new Date();
   return {
+    ...state,
     dismissed: {
       ...state.dismissed,
       [id]: {
@@ -3407,18 +3485,22 @@ function dismissedEntryIsActive(entry: DismissedWorkflow, now: number) {
 }
 
 function normalizeLocalState(value: unknown): LocalState {
-  if (!value || typeof value !== 'object') return { dismissed: {} };
+  if (!value || typeof value !== 'object') return emptyLocalState();
   const data = value as {
     dismissed?: Record<string, DismissedWorkflow>;
+    handoffs?: Array<HandoffEvent>;
     skipped?: Record<string, string>;
   };
+  const handoffs = Array.isArray(data.handoffs)
+    ? normalizeHandoffEvents(data.handoffs)
+    : [];
   if (data.dismissed && typeof data.dismissed === 'object') {
-    return { dismissed: normalizeDismissedMap(data.dismissed) };
+    return { dismissed: normalizeDismissedMap(data.dismissed), handoffs };
   }
   if (data.skipped && typeof data.skipped === 'object') {
-    return { dismissed: skippedMapToDismissed(data.skipped) };
+    return { dismissed: skippedMapToDismissed(data.skipped), handoffs };
   }
-  return { dismissed: {} };
+  return { dismissed: {}, handoffs };
 }
 
 function normalizeDismissedMap(value: Record<string, DismissedWorkflow>) {
@@ -3448,12 +3530,50 @@ function skippedMapToDismissed(skipped: Record<string, string>) {
   return Object.fromEntries(entries);
 }
 
+function normalizeHandoffEvents(value: Array<HandoffEvent>) {
+  return value
+    .filter((event) =>
+      Boolean(event) &&
+      typeof event === 'object' &&
+      typeof event.id === 'string' &&
+      typeof event.workflowId === 'string' &&
+      typeof event.message === 'string' &&
+      typeof event.ranAt === 'string',
+    )
+    .map((event) => ({
+      command: typeof event.command === 'string' ? event.command : '',
+      id: event.id,
+      kind: typeof event.kind === 'string' ? event.kind : '',
+      message: event.message,
+      prNumber: typeof event.prNumber === 'number' ? event.prNumber : null,
+      ranAt: event.ranAt,
+      ticketId: typeof event.ticketId === 'string' ? event.ticketId : null,
+      title: typeof event.title === 'string' ? event.title : event.workflowId,
+      workflowId: event.workflowId,
+    }))
+    .slice(0, 30);
+}
+
+function mergeHandoffEvents(
+  left: Array<HandoffEvent>,
+  right: Array<HandoffEvent>,
+) {
+  const events = new Map<string, HandoffEvent>();
+  for (const event of [...right, ...left]) {
+    events.set(event.id, event);
+  }
+  return [...events.values()]
+    .sort((leftEvent, rightEvent) => timestampMs(rightEvent.ranAt) - timestampMs(leftEvent.ranAt))
+    .slice(0, 30);
+}
+
 function mergeLocalState(left: LocalState, right: LocalState): LocalState {
   return {
     dismissed: {
       ...left.dismissed,
       ...right.dismissed,
     },
+    handoffs: mergeHandoffEvents(left.handoffs, right.handoffs),
   };
 }
 

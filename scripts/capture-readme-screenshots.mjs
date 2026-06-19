@@ -86,7 +86,22 @@ async function installMockRoutes(page) {
   });
   await page.route('**/api/user-state**', async (route) => {
     await route.fulfill({
-      body: JSON.stringify({ dismissed: {} }),
+      body: JSON.stringify({
+        dismissed: {},
+        handoffs: [
+          {
+            command: 'tmux new-window ...',
+            id: 'demo-handoff-app-214',
+            kind: 'resume-codex',
+            message: 'Resumed Codex in tmux session product.',
+            prNumber: 128,
+            ranAt: new Date().toISOString(),
+            ticketId: 'APP-214',
+            title: 'Checkout retry loop',
+            workflowId: 'ticket:APP-214',
+          },
+        ],
+      }),
       contentType: 'application/json',
       status: 200,
     });
