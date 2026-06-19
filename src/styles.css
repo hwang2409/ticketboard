@@ -1301,6 +1301,17 @@ button.plan-digest-item {
   white-space: nowrap;
 }
 
+.lane-action-guard {
+  border-style: dashed;
+  color: var(--warning);
+}
+
+.lane-action-guard:hover,
+.lane-action-guard:focus-visible {
+  border-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 9%, var(--surface));
+}
+
 .parallel-lane-action .action-result {
   display: grid;
   min-height: 0;

@@ -1383,6 +1383,7 @@ function ParallelLaneRow({
   const action = workflow
     ? buildWorkflowAction(workflow, dashboard, buildLaneCodexPrompt(lane, workflow))
     : null;
+  const actionGuard = action ? laneActionGuard(lane, action) : null;
   const content = (
     <>
       <span className={`parallel-role parallel-role-${lane.role}`}>
@@ -1420,7 +1421,7 @@ function ParallelLaneRow({
           {content}
         </button>
         <div className="parallel-lane-action">
-          {action && workflow ? (
+          {action && workflow && actionGuard?.runnable ? (
             <WorkflowActionButton
               action={action}
               className="ghost-button action-button lane-action-button"
@@ -1430,6 +1431,17 @@ function ParallelLaneRow({
               testId={`run-lane-action-${lane.role}`}
               title={`Run ${laneRoleLabel(lane.role).toLowerCase()} lane action`}
             />
+          ) : action && actionGuard ? (
+            <button
+              className="ghost-button lane-action-button lane-action-guard"
+              data-lane-action-guard={lane.safety.level}
+              onClick={() => onSelect(lane.workflowId as string)}
+              title={actionGuard.reason}
+              type="button"
+            >
+              <AlertTriangle aria-hidden="true" size={14} />
+              {actionGuard.label}
+            </button>
           ) : (
             <span>No local action</span>
           )}
@@ -2216,6 +2228,32 @@ function laneRoleLabel(role: ParallelLaneRole) {
     watch: 'Watch',
   };
   return labels[role];
+}
+
+function laneActionGuard(lane: ParallelLane, action: PlannedWorkflowAction) {
+  const automatedKinds = new Set<WorkflowActionRequest['kind']>([
+    'launch-codex',
+    'resume-codex',
+    'start-lane',
+  ]);
+  if (!automatedKinds.has(action.request.kind)) {
+    return { label: action.label, reason: 'Human checkpoint action.', runnable: true };
+  }
+  if (lane.role === 'focus' || lane.safety.level === 'focus' || lane.safety.level === 'safe') {
+    return { label: action.label, reason: lane.safety.detail, runnable: true };
+  }
+  if (lane.safety.level === 'blocked') {
+    return {
+      label: 'Review first',
+      reason: `Guarded because ${lane.safety.detail}`,
+      runnable: false,
+    };
+  }
+  return {
+    label: 'Check first',
+    reason: `Guarded because ${lane.safety.detail}`,
+    runnable: false,
+  };
 }
 
 function handoffKindLabel(kind: string) {
