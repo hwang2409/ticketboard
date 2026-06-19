@@ -14,6 +14,7 @@ It is designed to answer one question quickly: **what should own focus, what can
 - Builds a lane plan for focus work, parallel Codex candidates, waiting checkpoints, and cleanup.
 - Guards Codex lane actions when focus safety is unknown or files overlap.
 - Offers a next-safe-lane action when one parallel Codex handoff is ready.
+- Shows brief freshness, watcher cadence, lock state, and last evidence fingerprint.
 - Explains the selected move with evidence, latest signal, terminal context, and finish criteria.
 - Can focus an existing tmux lane, create a worktree, resume Codex, open a PR, or launch a new Codex lane.
 - Shows a generated project plan: done, current, next, cleanup, and stale signals.

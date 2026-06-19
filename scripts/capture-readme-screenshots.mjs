@@ -257,6 +257,20 @@ function mockDashboard() {
 function mockWorkflowBrief() {
   return {
     ageSeconds: 42,
+    automation: {
+      briefTtlSeconds: 600,
+      evidenceFingerprint: '8f14e45fceea167a5a36dedd4bea2543',
+      fingerprintPath: '/Users/you/.codex/ticketboard/workflow-brief.fingerprint.json',
+      fingerprintStatus: 'generated',
+      fingerprintUpdatedAt: new Date().toISOString(),
+      intervalSeconds: 600,
+      lockActive: false,
+      lockAgeSeconds: null,
+      lockPath: '/Users/you/.codex/ticketboard/workflow-brief.json.lock',
+      lockStale: false,
+      lockTtlSeconds: 1800,
+      snapshotPath: '/Users/you/.codex/ticketboard/workflow-evidence-snapshot.json',
+    },
     brief: {
       generatedAt: new Date().toISOString(),
       lanes: [
@@ -346,6 +360,7 @@ function mockWorkflowBrief() {
     path: '/Users/you/.codex/ticketboard/workflow-brief.json',
     reason: null,
     status: 'ready',
+    ttlSeconds: 600,
   };
 }
 

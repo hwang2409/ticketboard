@@ -507,6 +507,9 @@ export function App() {
             <div className="operator-grid">
               <PrimaryWorkflow
                 dashboard={dashboard}
+                onRefreshBrief={() => {
+                  void refreshWorkflowBrief(true);
+                }}
                 workflowBrief={
                   workflowBrief && briefAppliesToWorkflow(workflowBrief, selectedWorkflow)
                     ? workflowBrief
@@ -814,6 +817,7 @@ function EmptyWorkflowState({
 function PrimaryWorkflow({
   dashboard,
   onActionComplete,
+  onRefreshBrief,
   onSkip,
   workflow,
   workflowBrief,
@@ -821,6 +825,7 @@ function PrimaryWorkflow({
 }: {
   dashboard: DashboardData;
   onActionComplete: (shouldAdvance: boolean) => void;
+  onRefreshBrief: () => void;
   onSkip: (workflow: WorkflowItem) => void;
   workflow: WorkflowItem;
   workflowBrief: WorkflowBrief | null;
@@ -883,6 +888,11 @@ function PrimaryWorkflow({
       {!workflowBrief && workflowBriefStatus?.status ? (
         <WorkflowBriefStatus status={workflowBriefStatus} />
       ) : null}
+
+      <WorkflowAutomationPanel
+        onRefresh={onRefreshBrief}
+        status={workflowBriefStatus}
+      />
 
       <WorkflowHandoffPanel handoff={handoff} />
 
@@ -1044,6 +1054,116 @@ function WorkflowBriefStatus({ status }: { status: WorkflowBriefResponse }) {
       <code>{status.path}</code>
     </section>
   );
+}
+
+function WorkflowAutomationPanel({
+  onRefresh,
+  status,
+}: {
+  onRefresh: () => void;
+  status: WorkflowBriefResponse | null;
+}) {
+  if (!status) return null;
+
+  const automation = status.automation;
+  const ageSeconds = status.ageSeconds ?? null;
+  const ttlSeconds = status.ttlSeconds ?? automation?.briefTtlSeconds ?? null;
+  const remainingSeconds =
+    ageSeconds !== null && ttlSeconds !== null
+      ? Math.max(0, ttlSeconds - ageSeconds)
+      : null;
+  const lockState = automation?.lockActive
+    ? 'active'
+    : automation?.lockStale
+      ? 'stale'
+      : 'idle';
+  const fingerprintStatus = automation?.fingerprintStatus ?? 'none';
+
+  return (
+    <section
+      className={`workflow-automation workflow-automation-${status.status}`}
+      data-automation-lock-state={lockState}
+      data-automation-status={status.status}
+      data-workflow-automation
+    >
+      <div className="automation-head">
+        <span className="section-kicker">Brief automation</span>
+        <button className="ghost-button" onClick={onRefresh} type="button">
+          <RefreshCw aria-hidden="true" size={14} />
+          Refresh brief
+        </button>
+      </div>
+      <div className="automation-summary">
+        <Bot aria-hidden="true" size={17} />
+        <p>
+          <strong>
+            {briefStatusLabel(status.status)} / {lockStateLabel(lockState)}
+          </strong>
+          <em>{briefAutomationSummary(status, remainingSeconds)}</em>
+        </p>
+      </div>
+      <div className="automation-facts">
+        <span>
+          <b>{formatDurationSeconds(ageSeconds)}</b>
+          <em>brief age</em>
+        </span>
+        <span>
+          <b>{formatDurationSeconds(ttlSeconds)}</b>
+          <em>fresh window</em>
+        </span>
+        <span>
+          <b>{formatDurationSeconds(automation?.intervalSeconds ?? null)}</b>
+          <em>watch cadence</em>
+        </span>
+        <span>
+          <b>{fingerprintStatusLabel(fingerprintStatus)}</b>
+          <em>{shortFingerprint(automation?.evidenceFingerprint ?? null)}</em>
+        </span>
+      </div>
+      <code>{automation?.fingerprintPath ?? status.path}</code>
+    </section>
+  );
+}
+
+function briefStatusLabel(status: WorkflowBriefResponse['status']) {
+  if (status === 'ready') return 'Fresh';
+  if (status === 'stale') return 'Stale';
+  if (status === 'invalid') return 'Invalid';
+  return 'Missing';
+}
+
+function fingerprintStatusLabel(status: string) {
+  if (status === 'generated') return 'gen';
+  if (status === 'refreshed') return 'refresh';
+  if (status === 'none') return 'none';
+  return truncate(status, 8);
+}
+
+function lockStateLabel(state: 'active' | 'idle' | 'stale') {
+  if (state === 'active') return 'Codex running';
+  if (state === 'stale') return 'stale lock';
+  return 'Codex idle';
+}
+
+function briefAutomationSummary(
+  status: WorkflowBriefResponse,
+  remainingSeconds: number | null,
+) {
+  if (status.automation?.lockActive) {
+    return 'A Codex generator lock is active, so another watcher should wait.';
+  }
+  if (status.status === 'ready') {
+    return remainingSeconds !== null && remainingSeconds > 0
+      ? `Watcher should skip Codex for about ${formatDurationSeconds(remainingSeconds)} unless evidence changes.`
+      : 'Watcher can re-check evidence before deciding whether Codex is needed.';
+  }
+  if (status.status === 'stale') {
+    return status.reason ?? 'Watcher should compare evidence before starting Codex.';
+  }
+  if (status.status === 'invalid') {
+    return status.reason ?? 'The next watcher pass should regenerate the brief.';
+  }
+  return 'Start pnpm brief:watch or run pnpm brief:codex to generate the first brief.';
 }
 
 function InfoColumn({
@@ -3788,6 +3908,25 @@ function formatRelativeTime(value: string) {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.round(hours / 24);
   return `${days}d ago`;
+}
+
+function formatDurationSeconds(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return 'unknown';
+  }
+  const seconds = Math.max(0, Math.round(value));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.round(hours / 24);
+  return `${days}d`;
+}
+
+function shortFingerprint(value: string | null | undefined) {
+  if (!value) return 'no fingerprint';
+  return value.slice(0, 8);
 }
 
 function formatNumber(value: number) {

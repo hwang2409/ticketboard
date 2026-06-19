@@ -456,7 +456,22 @@ export type WorkflowBriefResponse = {
   brief: WorkflowBrief | null;
   path: string;
   reason: string | null;
+  ttlSeconds?: number | null;
   ageSeconds?: number | null;
+  automation?: {
+    briefTtlSeconds: number;
+    evidenceFingerprint: string | null;
+    fingerprintPath: string;
+    fingerprintStatus: string | null;
+    fingerprintUpdatedAt: string | null;
+    intervalSeconds: number;
+    lockActive: boolean;
+    lockAgeSeconds: number | null;
+    lockPath: string;
+    lockStale: boolean;
+    lockTtlSeconds: number;
+    snapshotPath: string | null;
+  };
 };
 
 export type WorkflowActionKind =

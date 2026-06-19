@@ -428,6 +428,7 @@ input:focus-visible {
 .primary-launch,
 .workflow-brief,
 .workflow-brief-status,
+.workflow-automation,
 .workflow-handoff,
 .manual-fallbacks {
   margin-right: 22px;
@@ -669,6 +670,95 @@ input:focus-visible {
 .workflow-brief-status code {
   color: var(--muted);
   font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.workflow-automation {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.automation-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.automation-head .ghost-button {
+  min-height: 2rem;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.74rem;
+}
+
+.automation-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: start;
+}
+
+.automation-summary svg {
+  margin-top: 0.1rem;
+  color: var(--muted);
+}
+
+.automation-summary p {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0;
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.automation-summary strong {
+  color: var(--foreground);
+}
+
+.automation-summary em {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.automation-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+}
+
+.automation-facts span {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
+  padding: 0.55rem 0.6rem;
+  border-right: 1px solid var(--border);
+}
+
+.automation-facts span:last-child {
+  border-right: 0;
+}
+
+.automation-facts b {
+  font-size: 0.82rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.automation-facts em {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-style: normal;
+  text-transform: uppercase;
+}
+
+.workflow-automation code {
+  color: var(--muted);
+  font-size: 0.7rem;
   overflow-wrap: anywhere;
 }
 
@@ -1924,15 +2014,33 @@ button.plan-item {
   .primary-launch,
   .workflow-brief,
   .workflow-brief-status,
+  .workflow-automation,
   .workflow-handoff,
   .manual-fallbacks {
     margin-right: 16px;
     margin-left: 16px;
   }
 
+  .automation-head,
   .brief-head,
   .brief-grid {
     grid-template-columns: 1fr;
+  }
+
+  .automation-head .ghost-button {
+    width: 100%;
+  }
+
+  .automation-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .automation-facts span:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .automation-facts span:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--border);
   }
 
   .brief-head em {

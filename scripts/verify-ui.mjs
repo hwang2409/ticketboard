@@ -112,6 +112,11 @@ async function verifyViewport({ width, height, screenshot }) {
     }
     await page.waitForSelector('[data-primary-workflow]', { timeout: 10_000 });
     await page.waitForSelector('[data-testid="command-status"]', { timeout: 10_000 });
+    await page.waitForSelector('[data-workflow-automation]', { timeout: 10_000 });
+    const automationStatus = await page.locator('[data-workflow-automation]').first().getAttribute('data-automation-status');
+    if (!['invalid', 'missing', 'ready', 'stale'].includes(automationStatus)) {
+      throw new Error(`Expected workflow automation panel to expose brief status, got ${automationStatus}`);
+    }
     if ((await page.locator('[data-testid="command-strip"] .metric-pill').count()) > 0) {
       throw new Error('Workflow command strip should not expose source-count metric pills');
     }
@@ -615,6 +620,19 @@ function validateWorkflowBriefShape(response) {
   }
   if (typeof response.path !== 'string') {
     throw new Error('Expected workflow brief response path');
+  }
+  if (!Number.isFinite(response.ttlSeconds)) {
+    throw new Error('Expected workflow brief response ttlSeconds');
+  }
+  if (
+    !response.automation ||
+    typeof response.automation !== 'object' ||
+    typeof response.automation.fingerprintPath !== 'string' ||
+    typeof response.automation.lockPath !== 'string' ||
+    typeof response.automation.lockActive !== 'boolean' ||
+    !Number.isFinite(response.automation.intervalSeconds)
+  ) {
+    throw new Error('Expected workflow brief response automation status');
   }
   if (response.status === 'ready') {
     const brief = response.brief;

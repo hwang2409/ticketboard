@@ -12,6 +12,8 @@ from .collectors import Settings
 
 WORKFLOW_BRIEF_VERSION = 1
 DEFAULT_WORKFLOW_BRIEF_TTL_SECONDS = 10 * 60
+DEFAULT_WORKFLOW_AUTOMATION_INTERVAL_MS = 10 * 60 * 1000
+DEFAULT_WORKFLOW_LOCK_TTL_MS = 30 * 60 * 1000
 MAX_PLAN_DOC_CHARS = 40_000
 VOLATILE_EVIDENCE_KEYS = {"dashboardGeneratedAt", "generatedAt"}
 
@@ -39,17 +41,98 @@ def workflow_brief_ttl_seconds() -> int:
     )
 
 
+def workflow_automation_interval_seconds() -> int:
+    return max(
+        60,
+        int(
+            os.environ.get(
+                "TICKETBOARD_WORKFLOW_AUTOMATION_INTERVAL_MS",
+                str(DEFAULT_WORKFLOW_AUTOMATION_INTERVAL_MS),
+            ),
+        )
+        // 1000,
+    )
+
+
+def workflow_lock_ttl_seconds() -> int:
+    return max(
+        60,
+        int(
+            os.environ.get(
+                "TICKETBOARD_WORKFLOW_LOCK_TTL_MS",
+                str(DEFAULT_WORKFLOW_LOCK_TTL_MS),
+            ),
+        )
+        // 1000,
+    )
+
+
+def workflow_fingerprint_path(brief_path: Path) -> Path:
+    configured = os.environ.get("TICKETBOARD_WORKFLOW_FINGERPRINT_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path(f"{brief_path}.fingerprint.json")
+
+
+def workflow_lock_path(brief_path: Path) -> Path:
+    configured = os.environ.get("TICKETBOARD_WORKFLOW_LOCK_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path(f"{brief_path}.lock")
+
+
+def workflow_automation_status(brief_path: Path) -> dict[str, Any]:
+    fingerprint_path = workflow_fingerprint_path(brief_path)
+    fingerprint = read_json(fingerprint_path)
+    if not isinstance(fingerprint, dict):
+        fingerprint = {}
+
+    lock_path = workflow_lock_path(brief_path)
+    lock_age_seconds: int | None = None
+    lock_active = False
+    try:
+        lock_stat = lock_path.stat()
+        lock_age_seconds = max(
+            0,
+            int(datetime.now(UTC).timestamp() - lock_stat.st_mtime),
+        )
+        lock_active = lock_age_seconds <= workflow_lock_ttl_seconds()
+    except FileNotFoundError:
+        pass
+    except Exception:
+        lock_age_seconds = None
+
+    return {
+        "briefTtlSeconds": workflow_brief_ttl_seconds(),
+        "intervalSeconds": workflow_automation_interval_seconds(),
+        "lockActive": lock_active,
+        "lockAgeSeconds": lock_age_seconds,
+        "lockPath": str(lock_path),
+        "lockStale": lock_age_seconds is not None and not lock_active,
+        "lockTtlSeconds": workflow_lock_ttl_seconds(),
+        "fingerprintPath": str(fingerprint_path),
+        "fingerprintStatus": fingerprint.get("status"),
+        "fingerprintUpdatedAt": fingerprint.get("updatedAt"),
+        "evidenceFingerprint": fingerprint.get("evidenceFingerprint"),
+        "snapshotPath": fingerprint.get("snapshotPath"),
+    }
+
+
 def workflow_brief_status(
     settings: Settings,
     dashboard: dict[str, Any],
 ) -> dict[str, Any]:
     path = workflow_brief_path(settings)
+    automation = workflow_automation_status(path)
     payload = read_json(path)
     if payload is None:
         return {
             "status": "missing",
             "brief": None,
             "path": str(path),
+            "ageSeconds": None,
+            "automation": automation,
+            "ttlSeconds": workflow_brief_ttl_seconds(),
             "reason": "No workflow brief has been generated yet.",
         }
 
@@ -59,6 +142,9 @@ def workflow_brief_status(
             "status": "invalid",
             "brief": None,
             "path": str(path),
+            "ageSeconds": None,
+            "automation": automation,
+            "ttlSeconds": workflow_brief_ttl_seconds(),
             "reason": reason,
         }
 
@@ -69,6 +155,8 @@ def workflow_brief_status(
             "brief": payload,
             "path": str(path),
             "ageSeconds": age_seconds,
+            "automation": automation,
+            "ttlSeconds": workflow_brief_ttl_seconds(),
             "reason": "The workflow brief is older than the configured TTL.",
         }
 
@@ -79,6 +167,8 @@ def workflow_brief_status(
             "brief": payload,
             "path": str(path),
             "ageSeconds": age_seconds,
+            "automation": automation,
+            "ttlSeconds": workflow_brief_ttl_seconds(),
             "reason": f"The selected target {target_id} is not visible anymore.",
         }
 
@@ -87,6 +177,8 @@ def workflow_brief_status(
         "brief": payload,
         "path": str(path),
         "ageSeconds": age_seconds,
+        "automation": automation,
+        "ttlSeconds": workflow_brief_ttl_seconds(),
         "reason": None,
     }
 
