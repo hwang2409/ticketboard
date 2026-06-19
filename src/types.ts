@@ -433,6 +433,7 @@ export type WorkflowBrief = {
   generatedAt: string;
   source?: {
     dashboardGeneratedAt?: string;
+    evidenceFingerprint?: string;
     evidenceSnapshotPath?: string;
     planDocPath?: string | null;
   };

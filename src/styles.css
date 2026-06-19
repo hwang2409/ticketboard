@@ -1043,7 +1043,7 @@ button.plan-digest-item {
 
 .parallel-lane {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) minmax(7rem, auto);
+  grid-template-columns: minmax(0, 1fr) minmax(7.5rem, auto);
   width: 100%;
   gap: 0.55rem;
   align-items: start;
@@ -1056,18 +1056,33 @@ button.plan-digest-item {
   text-align: left;
 }
 
-button.parallel-lane {
+.parallel-lane-select {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(7rem, auto);
+  width: 100%;
+  gap: 0.55rem;
+  align-items: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
+  text-align: left;
 }
 
 .parallel-lane:hover,
-.parallel-lane:focus-visible,
-.parallel-lane[aria-pressed="true"] {
+.parallel-lane:focus-within,
+.parallel-lane[data-selected="true"] {
   border-color: var(--foreground);
 }
 
-.parallel-lane[aria-pressed="true"] {
+.parallel-lane[data-selected="true"] {
   box-shadow: 3px 3px 0 var(--foreground);
+}
+
+.parallel-lane-select:focus-visible {
+  outline: 2px solid var(--foreground);
+  outline-offset: 3px;
 }
 
 .parallel-lane-hot {
@@ -1153,6 +1168,40 @@ button.parallel-lane {
 .parallel-lane-meta b {
   color: var(--foreground);
   font-weight: 700;
+}
+
+.parallel-lane-action {
+  display: grid;
+  min-width: 7.5rem;
+  gap: 0.35rem;
+  justify-items: stretch;
+}
+
+.parallel-lane-action > span {
+  align-self: center;
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-align: right;
+}
+
+.lane-action-button {
+  min-height: 2rem;
+  padding: 0.42rem 0.55rem;
+  white-space: nowrap;
+}
+
+.parallel-lane-action .action-result {
+  display: grid;
+  min-height: 0;
+  padding: 0.45rem 0.5rem;
+  gap: 0.18rem;
+  font-size: 0.68rem;
+}
+
+.parallel-lane-action .action-result span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .plan-sections {
@@ -1743,7 +1792,8 @@ button.plan-item {
   }
 
   .parallel-head,
-  .parallel-lane {
+  .parallel-lane,
+  .parallel-lane-select {
     grid-template-columns: 1fr;
   }
 
@@ -1760,6 +1810,14 @@ button.plan-item {
 
   .parallel-lane-meta {
     justify-items: start;
+    text-align: left;
+  }
+
+  .parallel-lane-action {
+    width: 100%;
+  }
+
+  .parallel-lane-action > span {
     text-align: left;
   }
 

@@ -479,6 +479,7 @@ export function App() {
                 workflow={selectedWorkflow}
               />
               <ProjectPlanRail
+                dashboard={dashboard}
                 hiddenCount={hiddenCount}
                 mode={mode}
                 modeCounts={modeCounts}
@@ -486,6 +487,7 @@ export function App() {
                 onQueryChange={setQuery}
                 onRestoreSkipped={handleRestoreSkipped}
                 onSelect={setSelectedWorkflowId}
+                onWorkflowActionComplete={handleActionComplete}
                 parallelPlan={parallelPlan}
                 plan={projectPlan}
                 query={query}
@@ -1035,6 +1037,7 @@ function InfoColumn({
 }
 
 function ProjectPlanRail({
+  dashboard,
   hiddenCount,
   mode,
   modeCounts,
@@ -1042,6 +1045,7 @@ function ProjectPlanRail({
   onQueryChange,
   onRestoreSkipped,
   onSelect,
+  onWorkflowActionComplete,
   parallelPlan,
   plan,
   query,
@@ -1049,6 +1053,7 @@ function ProjectPlanRail({
   visibleWorkflows,
   workflows,
 }: {
+  dashboard: DashboardData;
   hiddenCount: number;
   mode: WorkflowMode;
   modeCounts: Record<WorkflowMode, number>;
@@ -1056,6 +1061,7 @@ function ProjectPlanRail({
   onQueryChange: (query: string) => void;
   onRestoreSkipped: () => void;
   onSelect: (id: string) => void;
+  onWorkflowActionComplete: (workflow: WorkflowItem, shouldAdvance: boolean) => void;
   parallelPlan: ParallelPlan | null;
   plan: ProjectPlan;
   query: string;
@@ -1086,9 +1092,12 @@ function ProjectPlanRail({
 
       {parallelPlan ? (
         <ParallelLanesPanel
+          dashboard={dashboard}
+          onActionComplete={onWorkflowActionComplete}
           onSelect={onSelect}
           plan={parallelPlan}
           selectedWorkflowId={selectedWorkflowId}
+          workflows={workflows}
         />
       ) : null}
 
@@ -1233,13 +1242,19 @@ function PlanDigestItem({
 }
 
 function ParallelLanesPanel({
+  dashboard,
+  onActionComplete,
   onSelect,
   plan,
   selectedWorkflowId,
+  workflows,
 }: {
+  dashboard: DashboardData;
+  onActionComplete: (workflow: WorkflowItem, shouldAdvance: boolean) => void;
   onSelect: (id: string) => void;
   plan: ParallelPlan;
   selectedWorkflowId: string;
+  workflows: Array<WorkflowItem>;
 }) {
   if (!plan.lanes.length) return null;
 
@@ -1263,10 +1278,13 @@ function ParallelLanesPanel({
       <div className="parallel-lane-list">
         {plan.lanes.slice(0, 6).map((lane) => (
           <ParallelLaneRow
+            dashboard={dashboard}
             key={lane.id}
             lane={lane}
+            onActionComplete={onActionComplete}
             onSelect={onSelect}
             selectedWorkflowId={selectedWorkflowId}
+            workflows={workflows}
           />
         ))}
       </div>
@@ -1275,14 +1293,26 @@ function ParallelLanesPanel({
 }
 
 function ParallelLaneRow({
+  dashboard,
   lane,
+  onActionComplete,
   onSelect,
   selectedWorkflowId,
+  workflows,
 }: {
+  dashboard: DashboardData;
   lane: ParallelLane;
+  onActionComplete: (workflow: WorkflowItem, shouldAdvance: boolean) => void;
   onSelect: (id: string) => void;
   selectedWorkflowId: string;
+  workflows: Array<WorkflowItem>;
 }) {
+  const workflow = lane.workflowId
+    ? workflows.find((candidate) => candidate.id === lane.workflowId) ?? null
+    : null;
+  const action = workflow
+    ? buildWorkflowAction(workflow, dashboard, buildLaneCodexPrompt(lane, workflow))
+    : null;
   const content = (
     <>
       <span className={`parallel-role parallel-role-${lane.role}`}>
@@ -1302,15 +1332,36 @@ function ParallelLaneRow({
 
   if (lane.workflowId) {
     return (
-      <button
-        aria-pressed={lane.workflowId === selectedWorkflowId}
+      <div
         className={`parallel-lane parallel-lane-${lane.tone}`}
         data-parallel-lane={lane.id}
-        onClick={() => onSelect(lane.workflowId as string)}
-        type="button"
+        data-selected={lane.workflowId === selectedWorkflowId ? 'true' : 'false'}
       >
-        {content}
-      </button>
+        <button
+          aria-label={`Select ${lane.title}`}
+          aria-pressed={lane.workflowId === selectedWorkflowId}
+          className="parallel-lane-select"
+          onClick={() => onSelect(lane.workflowId as string)}
+          type="button"
+        >
+          {content}
+        </button>
+        <div className="parallel-lane-action">
+          {action && workflow ? (
+            <WorkflowActionButton
+              action={action}
+              className="ghost-button action-button lane-action-button"
+              onActionComplete={(shouldAdvance) => {
+                onActionComplete(workflow, shouldAdvance);
+              }}
+              testId={`run-lane-action-${lane.role}`}
+              title={`Run ${laneRoleLabel(lane.role).toLowerCase()} lane action`}
+            />
+          ) : (
+            <span>No local action</span>
+          )}
+        </div>
+      </div>
     );
   }
 
@@ -1486,10 +1537,16 @@ function CopyButton({
 
 function WorkflowActionButton({
   action,
+  className = 'solid-button action-button',
   onActionComplete,
+  testId = 'run-workflow-action',
+  title = 'Run the local action for this workflow',
 }: {
   action: PlannedWorkflowAction;
+  className?: string;
   onActionComplete: (shouldAdvance: boolean) => void;
+  testId?: string;
+  title?: string;
 }) {
   const [state, setState] = useState<ActionButtonState>({
     message: '',
@@ -1539,13 +1596,13 @@ function WorkflowActionButton({
   return (
     <>
       <button
-        className="solid-button action-button"
+        className={className}
         data-advance-on-success={action.advanceOnSuccess ? 'true' : 'false'}
         data-action-state={state.status}
-        data-testid="run-workflow-action"
+        data-testid={testId}
         disabled={state.status === 'running'}
         onClick={() => void runAction()}
-        title="Run the local action for this workflow"
+        title={title}
         type="button"
       >
         {state.status === 'running' ? (
@@ -1691,6 +1748,9 @@ function buildParallelPlan({
     const lanes = briefLanes
       .slice(0, 8)
       .map((lane, index) => parallelLaneFromBrief(lane, index, workflows));
+    if (selectedWorkflow && !lanes.some((lane) => lane.workflowId === selectedWorkflow.id)) {
+      lanes.unshift(parallelLaneFromWorkflow(selectedWorkflow, 'focus'));
+    }
     const recommendedActive =
       boundedLaneCount(brief?.operatingMode?.recommendedActiveLanes) ??
       Math.min(2, lanes.filter((lane) => lane.role !== 'waiting').length || 1);
@@ -2686,6 +2746,28 @@ function buildCodexPrompt(workflow: WorkflowItem) {
     'Source context:',
     ...workflow.evidence.map((line) => `- ${line}`),
     ...workflow.signals.slice(0, 3).map((line) => `- Latest: ${line}`),
+  ].join('\n');
+}
+
+function buildLaneCodexPrompt(lane: ParallelLane, workflow: WorkflowItem) {
+  const basePrompt = buildCodexPrompt(workflow);
+  return [
+    `Use this Ticketboard ${laneRoleLabel(lane.role).toLowerCase()} lane packet for ${workflow.title}.`,
+    `Lane role: ${laneRoleLabel(lane.role)}`,
+    `Lane action: ${lane.action}`,
+    `Lane reason: ${lane.detail || workflow.reason}`,
+    `Parallel safety: ${lane.parallelSafe ? 'safe to run beside the focus lane' : lane.status}`,
+    `Automation mode: ${lane.automation}`,
+    '',
+    'Lane rules:',
+    '- Stay inside this lane unless live evidence proves it is obsolete.',
+    '- Do not modify another active lane unless the ticket or PR explicitly requires it.',
+    '- End with the validation run, merge/readiness state, and the next handoff.',
+    '',
+    'Lane evidence:',
+    ...lane.evidence.map((line) => `- ${line}`),
+    '',
+    basePrompt,
   ].join('\n');
 }
 
