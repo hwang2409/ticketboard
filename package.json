@@ -6,6 +6,7 @@
   "scripts": {
     "brief:codex": "node scripts/generate-workflow-brief.mjs",
     "brief:snapshot": "node scripts/generate-workflow-brief.mjs --dry-run",
+    "brief:watch": "node scripts/watch-workflow-brief.mjs",
     "dev": "uv run python -m server.app",
     "screenshots:readme": "node scripts/capture-readme-screenshots.mjs",
     "build": "vite build",

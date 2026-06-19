@@ -7,8 +7,13 @@ import { dirname } from 'node:path';
 const args = new Set(process.argv.slice(2));
 const urlArg = process.argv.find((arg) => arg.startsWith('--url='));
 const codexArg = process.argv.find((arg) => arg.startsWith('--codex-bin='));
+const codexArgValues = process.argv
+  .filter((arg) => arg.startsWith('--codex-arg='))
+  .map((arg) => arg.slice('--codex-arg='.length))
+  .filter(Boolean);
 const baseUrl = (urlArg?.slice('--url='.length) ?? process.env.TICKETBOARD_URL ?? 'http://127.0.0.1:4317').replace(/\/$/, '');
 const codexBin = codexArg?.slice('--codex-bin='.length) ?? process.env.TICKETBOARD_CODEX_BIN ?? 'codex';
+const codexArgs = buildCodexArgs();
 const dryRun = args.has('--dry-run');
 
 const response = await fetch(
@@ -34,11 +39,16 @@ mkdirSync(dirname(promptPath), { recursive: true });
 writeFileSync(promptPath, prompt);
 
 if (dryRun) {
-  console.log(JSON.stringify({ briefPath, promptPath, snapshotPath }, null, 2));
+  console.log(JSON.stringify({
+    briefPath,
+    codexCommand: [codexBin, ...codexArgs, '--cd', process.cwd(), '<prompt>'],
+    promptPath,
+    snapshotPath,
+  }, null, 2));
   process.exit(0);
 }
 
-const result = spawnSync(codexBin, ['--cd', process.cwd(), prompt], {
+const result = spawnSync(codexBin, [...codexArgs, '--cd', process.cwd(), prompt], {
   stdio: 'inherit',
 });
 
@@ -50,6 +60,21 @@ if (result.status !== 0) {
 }
 
 console.log(`Workflow brief written to ${briefPath}`);
+
+function buildCodexArgs() {
+  const envArgs = (process.env.TICKETBOARD_CODEX_ARGS ?? '')
+    .split(/\s+/)
+    .map((arg) => arg.trim())
+    .filter(Boolean);
+  const explicitArgs = [...envArgs, ...codexArgValues];
+  if (args.has('--no-yolo')) {
+    return explicitArgs.filter((arg) => arg !== '--yolo');
+  }
+  if (explicitArgs.includes('--yolo')) {
+    return explicitArgs;
+  }
+  return ['--yolo', ...explicitArgs];
+}
 
 function buildPrompt({ briefPath, snapshotPath }) {
   return `You are the local Ticketboard workflow brief automation.
