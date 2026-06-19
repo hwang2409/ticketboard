@@ -101,6 +101,19 @@ type PlannedWorkflowAction = {
   runningLabel: string;
 };
 
+type LaneActionGuard = {
+  label: string;
+  reason: string;
+  runnable: boolean;
+};
+
+type RunnableLaneAction = {
+  action: PlannedWorkflowAction;
+  guard: LaneActionGuard;
+  lane: ParallelLane;
+  workflow: WorkflowItem;
+};
+
 type WorkflowHandoff = {
   done: string;
   finish: string;
@@ -1327,6 +1340,11 @@ function ParallelLanesPanel({
   workflows: Array<WorkflowItem>;
 }) {
   if (!plan.lanes.length) return null;
+  const nextLaneAction = nextSafeLaneAction({
+    dashboard,
+    lanes: plan.lanes,
+    workflows,
+  });
 
   return (
     <section className="parallel-lanes" data-parallel-lanes={plan.source}>
@@ -1342,6 +1360,24 @@ function ParallelLanesPanel({
             <strong>{plan.maxActive}</strong>
             max
           </span>
+        </div>
+        <div className="parallel-next-action">
+          {nextLaneAction ? (
+            <WorkflowActionButton
+              action={{
+                ...nextLaneAction.action,
+                label: 'Run next lane',
+              }}
+              className="ghost-button action-button lane-action-button"
+              onActionComplete={(shouldAdvance) => {
+                onActionComplete(nextLaneAction.workflow, shouldAdvance);
+              }}
+              testId="run-next-safe-lane"
+              title={`Run next safe lane: ${nextLaneAction.guard.reason}`}
+            />
+          ) : (
+            <span>No safe Codex lane</span>
+          )}
         </div>
       </div>
 
@@ -1380,10 +1416,7 @@ function ParallelLaneRow({
   const workflow = lane.workflowId
     ? workflows.find((candidate) => candidate.id === lane.workflowId) ?? null
     : null;
-  const action = workflow
-    ? buildWorkflowAction(workflow, dashboard, buildLaneCodexPrompt(lane, workflow))
-    : null;
-  const actionGuard = action ? laneActionGuard(lane, action) : null;
+  const laneAction = laneActionFor({ dashboard, lane, workflow });
   const content = (
     <>
       <span className={`parallel-role parallel-role-${lane.role}`}>
@@ -1421,26 +1454,26 @@ function ParallelLaneRow({
           {content}
         </button>
         <div className="parallel-lane-action">
-          {action && workflow && actionGuard?.runnable ? (
+          {laneAction?.guard.runnable ? (
             <WorkflowActionButton
-              action={action}
+              action={laneAction.action}
               className="ghost-button action-button lane-action-button"
               onActionComplete={(shouldAdvance) => {
-                onActionComplete(workflow, shouldAdvance);
+                onActionComplete(laneAction.workflow, shouldAdvance);
               }}
               testId={`run-lane-action-${lane.role}`}
               title={`Run ${laneRoleLabel(lane.role).toLowerCase()} lane action`}
             />
-          ) : action && actionGuard ? (
+          ) : laneAction ? (
             <button
               className="ghost-button lane-action-button lane-action-guard"
               data-lane-action-guard={lane.safety.level}
               onClick={() => onSelect(lane.workflowId as string)}
-              title={actionGuard.reason}
+              title={laneAction.guard.reason}
               type="button"
             >
               <AlertTriangle aria-hidden="true" size={14} />
-              {actionGuard.label}
+              {laneAction.guard.label}
             </button>
           ) : (
             <span>No local action</span>
@@ -2230,13 +2263,62 @@ function laneRoleLabel(role: ParallelLaneRole) {
   return labels[role];
 }
 
+function laneActionFor({
+  dashboard,
+  lane,
+  workflow,
+}: {
+  dashboard: DashboardData;
+  lane: ParallelLane;
+  workflow: WorkflowItem | null;
+}): RunnableLaneAction | null {
+  if (!workflow) return null;
+  const action = buildWorkflowAction(
+    workflow,
+    dashboard,
+    buildLaneCodexPrompt(lane, workflow),
+  );
+  if (!action) return null;
+  return {
+    action,
+    guard: laneActionGuard(lane, action),
+    lane,
+    workflow,
+  };
+}
+
+function nextSafeLaneAction({
+  dashboard,
+  lanes,
+  workflows,
+}: {
+  dashboard: DashboardData;
+  lanes: Array<ParallelLane>;
+  workflows: Array<WorkflowItem>;
+}): RunnableLaneAction | null {
+  for (const lane of lanes) {
+    if (lane.role !== 'parallel' && lane.role !== 'cleanup') continue;
+    if (lane.safety.level !== 'safe') continue;
+    const workflow = lane.workflowId
+      ? workflows.find((candidate) => candidate.id === lane.workflowId) ?? null
+      : null;
+    const laneAction = laneActionFor({ dashboard, lane, workflow });
+    if (
+      laneAction?.guard.runnable &&
+      automatedActionKind(laneAction.action.request.kind)
+    ) {
+      return laneAction;
+    }
+  }
+  return null;
+}
+
+function automatedActionKind(kind: WorkflowActionRequest['kind']) {
+  return kind === 'launch-codex' || kind === 'resume-codex' || kind === 'start-lane';
+}
+
 function laneActionGuard(lane: ParallelLane, action: PlannedWorkflowAction) {
-  const automatedKinds = new Set<WorkflowActionRequest['kind']>([
-    'launch-codex',
-    'resume-codex',
-    'start-lane',
-  ]);
-  if (!automatedKinds.has(action.request.kind)) {
+  if (!automatedActionKind(action.request.kind)) {
     return { label: action.label, reason: 'Human checkpoint action.', runnable: true };
   }
   if (lane.role === 'focus' || lane.safety.level === 'focus' || lane.safety.level === 'safe') {

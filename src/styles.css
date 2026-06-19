@@ -1114,6 +1114,32 @@ button.plan-digest-item {
   line-height: 1;
 }
 
+.parallel-next-action {
+  display: grid;
+  min-width: 8.2rem;
+  grid-column: 2;
+  gap: 0.35rem;
+}
+
+.parallel-next-action > span {
+  align-self: center;
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-align: right;
+}
+
+.parallel-next-action .lane-action-button {
+  width: 100%;
+}
+
+.parallel-next-action .action-result {
+  display: grid;
+  min-height: 0;
+  padding: 0.45rem 0.5rem;
+  gap: 0.18rem;
+  font-size: 0.68rem;
+}
+
 .parallel-lane-list {
   display: grid;
   gap: 0.45rem;
@@ -1929,6 +1955,16 @@ button.plan-item {
   .parallel-capacity {
     grid-row: auto;
     width: 100%;
+  }
+
+  .parallel-next-action {
+    grid-column: 1;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .parallel-next-action > span {
+    text-align: left;
   }
 
   .parallel-lane-meta {

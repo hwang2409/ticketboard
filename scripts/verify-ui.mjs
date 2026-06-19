@@ -130,6 +130,9 @@ async function verifyViewport({ width, height, screenshot }) {
         if ((await page.locator('[data-parallel-lane] .parallel-safety').count()) < 1) {
           throw new Error('Expected parallel lanes to explain focus safety');
         }
+        if ((await page.locator('.parallel-next-action').count()) < 1) {
+          throw new Error('Expected parallel lanes to expose a next safe lane control');
+        }
       }
     }
     await assertApprovedGreenPrimaryIsNotReview(page, dashboard);
