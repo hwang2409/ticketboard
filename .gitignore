@@ -1,0 +1,11 @@
+node_modules
+dist
+.DS_Store
+.env
+*.log
+.venv
+.mypy_cache
+.ruff_cache
+.playwright-mcp
+__pycache__
+*.pyc
