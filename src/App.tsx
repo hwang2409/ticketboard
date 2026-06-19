@@ -154,11 +154,21 @@ type ParallelLane = {
   meta: string;
   parallelSafe: boolean;
   role: ParallelLaneRole;
+  safety: ParallelSafety;
   source: 'brief' | 'live';
   status: string;
   title: string;
   tone: WorkflowTone;
   workflowId: string | null;
+};
+
+type ParallelSafetyLevel = 'blocked' | 'focus' | 'safe' | 'unknown' | 'waiting';
+
+type ParallelSafety = {
+  detail: string;
+  label: string;
+  level: ParallelSafetyLevel;
+  paths: Array<string>;
 };
 
 type ParallelPlan = {
@@ -1325,7 +1335,10 @@ function ParallelLaneRow({
       </span>
       <span className="parallel-lane-meta">
         <b>{lane.automation}</b>
-        <i>{lane.parallelSafe ? 'safe with focus' : lane.status}</i>
+        <span className={`parallel-safety parallel-safety-${lane.safety.level}`}>
+          {lane.safety.label}
+        </span>
+        <i title={lane.safety.detail}>{lane.safety.detail}</i>
       </span>
     </>
   );
@@ -1747,9 +1760,11 @@ function buildParallelPlan({
   if (briefLanes.length) {
     const lanes = briefLanes
       .slice(0, 8)
-      .map((lane, index) => parallelLaneFromBrief(lane, index, workflows));
+      .map((lane, index) =>
+        parallelLaneFromBrief(lane, index, workflows, selectedWorkflow),
+      );
     if (selectedWorkflow && !lanes.some((lane) => lane.workflowId === selectedWorkflow.id)) {
-      lanes.unshift(parallelLaneFromWorkflow(selectedWorkflow, 'focus'));
+      lanes.unshift(parallelLaneFromWorkflow(selectedWorkflow, 'focus', selectedWorkflow));
     }
     const recommendedActive =
       boundedLaneCount(brief?.operatingMode?.recommendedActiveLanes) ??
@@ -1771,18 +1786,30 @@ function buildParallelPlan({
   const selectedId = selectedWorkflow?.id ?? null;
   const lanes: Array<ParallelLane> = [];
   if (selectedWorkflow) {
-    lanes.push(parallelLaneFromWorkflow(selectedWorkflow, 'focus'));
+    lanes.push(parallelLaneFromWorkflow(selectedWorkflow, 'focus', selectedWorkflow));
   }
   const parallelCandidates = workflows
     .filter((workflow) => workflow.id !== selectedId)
     .filter((workflow) => ['fix-ci', 'review', 'resume', 'ship', 'start'].includes(workflow.intent))
     .slice(0, 4)
-    .map((workflow) => parallelLaneFromWorkflow(workflow, roleForParallelWorkflow(workflow)));
+    .map((workflow) =>
+      parallelLaneFromWorkflow(
+        workflow,
+        roleForParallelWorkflow(workflow),
+        selectedWorkflow,
+      ),
+    );
   const cleanupCandidates = workflows
     .filter((workflow) => workflow.id !== selectedId)
     .filter((workflow) => workflow.intent === 'clean' || workflow.intent === 'watch')
     .slice(0, 2)
-    .map((workflow) => parallelLaneFromWorkflow(workflow, roleForParallelWorkflow(workflow)));
+    .map((workflow) =>
+      parallelLaneFromWorkflow(
+        workflow,
+        roleForParallelWorkflow(workflow),
+        selectedWorkflow,
+      ),
+    );
   lanes.push(...parallelCandidates, ...cleanupCandidates);
 
   const recommendedActive = Math.min(
@@ -1802,6 +1829,7 @@ function parallelLaneFromBrief(
   item: NonNullable<WorkflowBrief['lanes']>[number],
   index: number,
   workflows: Array<WorkflowItem>,
+  focusWorkflow: WorkflowItem | null,
 ): ParallelLane {
   const workflowId = workflowIdFromBriefItem(item, workflows);
   const workflow = workflowId
@@ -1810,6 +1838,15 @@ function parallelLaneFromBrief(
   const role = normalizeLaneRole(item.role, index);
   const automation = item.automation || (workflow ? automationForWorkflow(workflow, role) : 'Manual handoff');
   const title = readableTitle(item.title || workflow?.title);
+  const fallbackSafety = safetyFromBriefHint(item, role);
+  const safety = workflow
+    ? analyzeParallelSafety({
+        candidate: workflow,
+        focus: focusWorkflow,
+        hintedSafe: item.parallelSafe,
+        role,
+      })
+    : fallbackSafety;
   return {
     action: readableSentence(item.action || workflow?.nextStep || 'Decide the next move.'),
     automation,
@@ -1817,8 +1854,9 @@ function parallelLaneFromBrief(
     evidence: item.evidence?.filter(Boolean).slice(0, 4) ?? workflow?.evidence.slice(0, 4) ?? [],
     id: item.laneId || workflowId || `${role}:${index}:${title}`,
     meta: item.confidence ? `${item.confidence} confidence` : laneRoleLabel(role),
-    parallelSafe: item.parallelSafe ?? role === 'parallel',
+    parallelSafe: safety.level === 'safe',
     role,
+    safety,
     source: 'brief',
     status: item.status || item.handoffWhen || item.finishedWhen || laneRoleLabel(role),
     title,
@@ -1830,8 +1868,14 @@ function parallelLaneFromBrief(
 function parallelLaneFromWorkflow(
   workflow: WorkflowItem,
   role: ParallelLaneRole,
+  focusWorkflow: WorkflowItem | null,
 ): ParallelLane {
-  const parallelSafe = role === 'parallel' && workflow.sessions.length === 0;
+  const safety = analyzeParallelSafety({
+    candidate: workflow,
+    focus: focusWorkflow,
+    hintedSafe: undefined,
+    role,
+  });
   return {
     action: workflow.nextStep,
     automation: automationForWorkflow(workflow, role),
@@ -1839,14 +1883,199 @@ function parallelLaneFromWorkflow(
     evidence: workflow.evidence.slice(0, 4),
     id: `${role}:${workflow.id}`,
     meta: INTENT_LABELS[workflow.intent],
-    parallelSafe,
+    parallelSafe: safety.level === 'safe',
     role,
+    safety,
     source: 'live',
     status: workflow.eyebrow,
     title: workflow.title,
     tone: workflow.tone,
     workflowId: workflow.id,
   };
+}
+
+function analyzeParallelSafety({
+  candidate,
+  focus,
+  hintedSafe,
+  role,
+}: {
+  candidate: WorkflowItem;
+  focus: WorkflowItem | null;
+  hintedSafe?: boolean;
+  role: ParallelLaneRole;
+}): ParallelSafety {
+  if (role === 'focus' || candidate.id === focus?.id) {
+    return {
+      detail: 'Owns the focus lane.',
+      label: 'Focus owner',
+      level: 'focus',
+      paths: [],
+    };
+  }
+
+  if (role === 'waiting') {
+    return {
+      detail: 'Waiting on review, checks, or a human checkpoint.',
+      label: 'Checkpoint',
+      level: 'waiting',
+      paths: [],
+    };
+  }
+
+  if (role === 'watch') {
+    return {
+      detail: 'Watch-only lane; no Codex handoff is needed.',
+      label: 'Watch only',
+      level: 'waiting',
+      paths: [],
+    };
+  }
+
+  const candidatePaths = workflowChangedPaths(candidate);
+  const focusPaths = focus ? workflowChangedPaths(focus) : [];
+  const overlap = intersectPaths(candidatePaths, focusPaths);
+
+  if (overlap.length) {
+    return {
+      detail: `Touches focus files: ${overlap.slice(0, 3).join(', ')}${overlap.length > 3 ? ', ...' : ''}.`,
+      label: 'File overlap',
+      level: 'blocked',
+      paths: overlap,
+    };
+  }
+
+  if (candidatePaths.length && focusPaths.length) {
+    return {
+      detail: `No overlap with ${moveCount(focusPaths.length, 'focus file')} across ${moveCount(candidatePaths.length, 'lane file')}.`,
+      label: 'No file overlap',
+      level: 'safe',
+      paths: candidatePaths.slice(0, 6),
+    };
+  }
+
+  if (hintedSafe === true) {
+    return {
+      detail: 'Codex marked this lane safe; no changed-file conflict is visible.',
+      label: 'Brief-safe',
+      level: 'safe',
+      paths: candidatePaths.slice(0, 6),
+    };
+  }
+
+  if (hintedSafe === false) {
+    return {
+      detail: 'Codex marked this lane serialized with the focus lane.',
+      label: 'Serialized',
+      level: 'blocked',
+      paths: [],
+    };
+  }
+
+  if (role === 'cleanup') {
+    return {
+      detail: candidatePaths.length
+        ? 'Cleanup touches no known focus files.'
+        : 'Cleanup lane has no changed-file detail yet.',
+      label: candidatePaths.length ? 'Cleanup-safe' : 'Check first',
+      level: candidatePaths.length ? 'safe' : 'unknown',
+      paths: candidatePaths.slice(0, 6),
+    };
+  }
+
+  return {
+    detail: candidatePaths.length
+      ? 'Focus file data is unavailable, so treat this as a guarded handoff.'
+      : 'No changed-file detail yet; verify before running beside focus.',
+    label: 'Verify first',
+    level: 'unknown',
+    paths: candidatePaths.slice(0, 6),
+  };
+}
+
+function safetyFromBriefHint(
+  item: NonNullable<WorkflowBrief['lanes']>[number],
+  role: ParallelLaneRole,
+): ParallelSafety {
+  if (role === 'focus') {
+    return {
+      detail: 'Owns the focus lane.',
+      label: 'Focus owner',
+      level: 'focus',
+      paths: [],
+    };
+  }
+  if (item.parallelSafe === true) {
+    return {
+      detail: item.status || item.handoffWhen || 'Codex marked this lane safe with focus.',
+      label: 'Brief-safe',
+      level: 'safe',
+      paths: [],
+    };
+  }
+  if (role === 'waiting') {
+    return {
+      detail: item.status || item.handoffWhen || 'Waiting on a checkpoint.',
+      label: 'Checkpoint',
+      level: 'waiting',
+      paths: [],
+    };
+  }
+  return {
+    detail: item.status || item.handoffWhen || 'No current workflow mapping to verify file overlap.',
+    label: item.parallelSafe === false ? 'Serialized' : 'Verify first',
+    level: item.parallelSafe === false ? 'blocked' : 'unknown',
+    paths: [],
+  };
+}
+
+function workflowChangedPaths(workflow: WorkflowItem): Array<string> {
+  const paths = new Set<string>();
+  for (const pr of workflow.prs) {
+    for (const file of pr.files) {
+      addNormalizedPath(paths, file.path);
+    }
+  }
+  for (const worktree of workflow.worktrees) {
+    for (const line of worktree.statusLines) {
+      for (const path of pathsFromStatusLine(line)) {
+        addNormalizedPath(paths, path);
+      }
+    }
+  }
+  return [...paths].sort((left, right) => left.localeCompare(right));
+}
+
+function addNormalizedPath(paths: Set<string>, value: string | null | undefined) {
+  const normalized = normalizeChangedPath(value);
+  if (normalized) {
+    paths.add(normalized);
+  }
+}
+
+function pathsFromStatusLine(line: string): Array<string> {
+  const stripped = line.trim().replace(/^[ MADRCU?!]{1,2}\s+/u, '');
+  if (!stripped) return [];
+  if (stripped.includes(' -> ')) {
+    return stripped.split(' -> ').map((part) => unquoteStatusPath(part));
+  }
+  return [unquoteStatusPath(stripped)];
+}
+
+function unquoteStatusPath(value: string) {
+  return value.trim().replace(/^"|"$/gu, '');
+}
+
+function normalizeChangedPath(value: string | null | undefined) {
+  const trimmed = String(value ?? '').trim();
+  if (!trimmed) return null;
+  return trimmed.replace(/^\.\/+/u, '');
+}
+
+function intersectPaths(left: Array<string>, right: Array<string>) {
+  if (!left.length || !right.length) return [];
+  const rightSet = new Set(right);
+  return left.filter((path) => rightSet.has(path));
 }
 
 function workflowIdFromBriefItem(
@@ -2756,7 +2985,7 @@ function buildLaneCodexPrompt(lane: ParallelLane, workflow: WorkflowItem) {
     `Lane role: ${laneRoleLabel(lane.role)}`,
     `Lane action: ${lane.action}`,
     `Lane reason: ${lane.detail || workflow.reason}`,
-    `Parallel safety: ${lane.parallelSafe ? 'safe to run beside the focus lane' : lane.status}`,
+    `Parallel safety: ${lane.safety.label} - ${lane.safety.detail}`,
     `Automation mode: ${lane.automation}`,
     '',
     'Lane rules:',

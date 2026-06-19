@@ -1170,6 +1170,39 @@ button.plan-digest-item {
   font-weight: 700;
 }
 
+.parallel-safety {
+  justify-self: end;
+  padding: 0.12rem 0.35rem;
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  line-height: 1.15;
+  text-transform: uppercase;
+}
+
+.parallel-safety-safe {
+  border-color: color-mix(in srgb, var(--green) 38%, var(--border));
+  color: var(--green);
+}
+
+.parallel-safety-blocked {
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--border));
+  color: var(--danger);
+}
+
+.parallel-safety-focus {
+  border-color: color-mix(in srgb, var(--foreground) 30%, var(--border));
+  color: var(--foreground);
+}
+
+.parallel-safety-waiting,
+.parallel-safety-unknown {
+  border-color: color-mix(in srgb, var(--warning) 38%, var(--border));
+  color: var(--warning);
+}
+
 .parallel-lane-action {
   display: grid;
   min-width: 7.5rem;
@@ -1811,6 +1844,10 @@ button.plan-item {
   .parallel-lane-meta {
     justify-items: start;
     text-align: left;
+  }
+
+  .parallel-safety {
+    justify-self: start;
   }
 
   .parallel-lane-action {

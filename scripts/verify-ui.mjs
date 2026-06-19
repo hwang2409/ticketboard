@@ -115,6 +115,9 @@ async function verifyViewport({ width, height, screenshot }) {
         if ((await page.locator('[data-parallel-lane] [data-testid^="run-lane-action-"]').count()) < 1) {
           throw new Error('Expected mapped workflow lanes to expose local action controls');
         }
+        if ((await page.locator('[data-parallel-lane] .parallel-safety').count()) < 1) {
+          throw new Error('Expected parallel lanes to explain focus safety');
+        }
       }
     }
     await assertApprovedGreenPrimaryIsNotReview(page, dashboard);
