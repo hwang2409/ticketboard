@@ -390,7 +390,11 @@ async def api_workflow_evidence_snapshot(
     fingerprintPreviews: str | None = None,
 ) -> Response:
     dashboard = await dashboard_for_brief(refresh == "1")
-    snapshot = build_workflow_evidence_snapshot(settings, dashboard)
+    snapshot = build_workflow_evidence_snapshot(
+        settings,
+        dashboard,
+        recent_handoffs=load_user_state().get("handoffs", []),
+    )
     if includePreviews == "1":
         snapshot["tmuxPanePreviews"] = await tmux_pane_previews_for_brief(dashboard)
     fingerprint = workflow_evidence_fingerprint(

@@ -24,7 +24,7 @@ Ticketboard keeps the browser thin. The backend gathers state, validates actions
 
 1. Local collectors read tmux windows, Codex sessions, git worktrees, GitHub PRs, Linear tickets, and cached state.
 2. A deterministic scorer builds a fallback workflow queue, so the app still works without any generated brief.
-3. The optional Codex automation exports an evidence snapshot from `/api/workflow-brief/evidence-snapshot`.
+3. The optional Codex automation exports an evidence snapshot from `/api/workflow-brief/evidence-snapshot`, including recent handoffs.
 4. Local Codex runs in `--yolo` mode, reads that snapshot, reasons over focus plus safe parallel lanes, and writes a structured JSON brief.
 5. The UI renders the Codex brief when it is fresh; otherwise it falls back to deterministic focus/parallel/cleanup lanes.
 

@@ -94,6 +94,8 @@ def workflow_brief_status(
 def build_workflow_evidence_snapshot(
     settings: Settings,
     dashboard: dict[str, Any],
+    *,
+    recent_handoffs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     plan_doc = read_configured_plan_doc()
     snapshot = {
@@ -193,6 +195,7 @@ def build_workflow_evidence_snapshot(
             }
             for session in dashboard.get("codexSessions", [])
         ],
+        "recentHandoffs": summarize_recent_handoffs(recent_handoffs or []),
         "diagnostics": dashboard.get("diagnostics", []),
         "planDoc": plan_doc,
         "instructions": {
@@ -201,12 +204,34 @@ def build_workflow_evidence_snapshot(
                 "parallel lane plan. Prefer live failing checks, active "
                 "tmux/worktree lanes, and review state over quiet strategic backlog. "
                 "Only mark lanes parallel-safe when their work can proceed without "
-                "overwriting the focus lane or depending on its result."
+                "overwriting the focus lane or depending on its result. Treat "
+                "recent handoffs as orchestration memory so launched/resumed lanes "
+                "are not immediately recommended again unless live evidence changed."
             ),
             "outputPath": str(workflow_brief_path(settings)),
         },
     }
     return snapshot
+
+
+def summarize_recent_handoffs(handoffs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    summarized = []
+    for item in handoffs[:10]:
+        if not isinstance(item, dict):
+            continue
+        summarized.append(
+            {
+                "id": item.get("id"),
+                "kind": item.get("kind"),
+                "workflowId": item.get("workflowId"),
+                "title": item.get("title"),
+                "ticketId": item.get("ticketId"),
+                "prNumber": item.get("prNumber"),
+                "message": item.get("message"),
+                "ranAt": item.get("ranAt"),
+            },
+        )
+    return summarized
 
 
 def workflow_evidence_fingerprint(

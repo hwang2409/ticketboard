@@ -80,6 +80,14 @@ async function verifyViewport({ width, height, screenshot }) {
   }
   const workflowBrief = await briefResponse.json();
   validateWorkflowBriefShape(workflowBrief);
+  const evidenceResponse = await page.request.get(
+    `${baseUrl}/api/workflow-brief/evidence-snapshot?refresh=1&verify=${width}x${height}-${Date.now()}`,
+    { headers: { 'cache-control': 'no-cache' } },
+  );
+  if (!evidenceResponse.ok()) {
+    throw new Error(`Expected workflow evidence API to load, got ${evidenceResponse.status()}`);
+  }
+  validateWorkflowEvidenceShape(await evidenceResponse.json());
   await verifyUserStateApi(page);
   await mockUserStateRoutes(page);
 
@@ -623,6 +631,18 @@ function validateWorkflowBriefShape(response) {
         throw new Error(`Expected workflow brief lane ${index} to include title and action`);
       }
     }
+  }
+}
+
+function validateWorkflowEvidenceShape(response) {
+  if (
+    !response ||
+    typeof response !== 'object' ||
+    typeof response.path !== 'string' ||
+    typeof response.fingerprint !== 'string' ||
+    !Array.isArray(response.snapshot?.recentHandoffs)
+  ) {
+    throw new Error('Expected workflow evidence snapshot to include recent handoffs');
   }
 }
 
