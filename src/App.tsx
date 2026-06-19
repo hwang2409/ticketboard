@@ -186,6 +186,29 @@ type UnlockMap = {
   summary: string;
 };
 
+type LaneLoadTone = 'active' | 'over' | 'warn';
+
+type LaneLoadItem = {
+  detail: string;
+  id: string;
+  meta: string;
+  title: string;
+  tone: LaneLoadTone;
+  workflowId: string;
+};
+
+type LaneLoad = {
+  activeCount: number;
+  capacityLabel: string;
+  dirtyCount: number;
+  items: Array<LaneLoadItem>;
+  maxActive: number;
+  recommendedActive: number;
+  runningCount: number;
+  summary: string;
+  terminalCount: number;
+};
+
 type ParallelLaneRole = 'cleanup' | 'focus' | 'parallel' | 'waiting' | 'watch';
 
 type ParallelLane = {
@@ -1285,6 +1308,12 @@ function ProjectPlanRail({
         selectedWorkflowId={selectedWorkflowId}
       />
 
+      <LaneLoadPanel
+        onSelect={onSelect}
+        parallelPlan={parallelPlan}
+        workflows={workflows}
+      />
+
       <HandoffLedger handoffs={handoffs} onSelect={onSelect} />
 
       <UnlockMapPanel
@@ -1441,6 +1470,66 @@ function PlanDigestItem({
     <span className={className} data-plan-digest-item={item.id}>
       {content}
     </span>
+  );
+}
+
+function LaneLoadPanel({
+  onSelect,
+  parallelPlan,
+  workflows,
+}: {
+  onSelect: (id: string) => void;
+  parallelPlan: ParallelPlan | null;
+  workflows: Array<WorkflowItem>;
+}) {
+  const load = buildLaneLoad({ parallelPlan, workflows });
+
+  return (
+    <section className="lane-load" data-lane-load>
+      <div className="lane-load-head">
+        <span className="section-kicker">Lane load</span>
+        <small>{load.summary}</small>
+      </div>
+      <div className="lane-load-facts">
+        <span>
+          <b>{load.activeCount}</b>
+          <em>active</em>
+        </span>
+        <span>
+          <b>{load.runningCount}</b>
+          <em>Codex</em>
+        </span>
+        <span>
+          <b>{load.dirtyCount}</b>
+          <em>dirty</em>
+        </span>
+        <span>
+          <b>{load.recommendedActive}/{load.maxActive}</b>
+          <em>{load.capacityLabel}</em>
+        </span>
+      </div>
+      <div className="lane-load-list">
+        {load.items.length ? (
+          load.items.map((item) => (
+            <button
+              className={`lane-load-item lane-load-item-${item.tone}`}
+              data-lane-load-item={item.id}
+              key={item.id}
+              onClick={() => onSelect(item.workflowId)}
+              type="button"
+            >
+              <span>
+                <strong>{item.title}</strong>
+                <em>{item.detail}</em>
+              </span>
+              <small>{item.meta}</small>
+            </button>
+          ))
+        ) : (
+          <p>No active Codex, terminal, or dirty local lanes are visible.</p>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -2732,6 +2821,144 @@ function parallelPlanSummary({
     cleanupCount ? `${moveCount(cleanupCount, 'cleanup lane')}` : '',
   ].filter(Boolean);
   return `${prefix} ${parts.join('; ')}.`;
+}
+
+function buildLaneLoad({
+  parallelPlan,
+  workflows,
+}: {
+  parallelPlan: ParallelPlan | null;
+  workflows: Array<WorkflowItem>;
+}): LaneLoad {
+  const recommendedActive = parallelPlan?.recommendedActive ?? 1;
+  const maxActive = parallelPlan?.maxActive ?? Math.max(3, recommendedActive);
+  const items = workflows
+    .map(laneLoadItemFromWorkflow)
+    .filter((item): item is LaneLoadItem => Boolean(item))
+    .sort((left, right) => laneLoadToneRank(left.tone) - laneLoadToneRank(right.tone))
+    .slice(0, 5);
+  const activeCount = workflows.filter(workflowHasLiveLane).length;
+  const runningCount = workflows.filter((workflow) =>
+    workflow.sessions.some(isActiveCodexSession),
+  ).length;
+  const dirtyCount = workflows.filter((workflow) =>
+    workflow.worktrees.some((worktree) => (worktree.dirtyCount ?? 0) > 0),
+  ).length;
+  const terminalCount = workflows.filter((workflow) => workflow.windows.length > 0).length;
+  const capacityLabel =
+    activeCount > maxActive
+      ? 'over max'
+      : activeCount > recommendedActive
+        ? 'above plan'
+        : activeCount === recommendedActive
+          ? 'at plan'
+          : 'room';
+
+  return {
+    activeCount,
+    capacityLabel,
+    dirtyCount,
+    items,
+    maxActive,
+    recommendedActive,
+    runningCount,
+    summary: laneLoadSummary({ activeCount, maxActive, recommendedActive }),
+    terminalCount,
+  };
+}
+
+function laneLoadItemFromWorkflow(workflow: WorkflowItem): LaneLoadItem | null {
+  const activeSessions = workflow.sessions.filter(isActiveCodexSession);
+  const dirtyFiles = workflow.worktrees.reduce(
+    (sum, worktree) => sum + (worktree.dirtyCount ?? 0),
+    0,
+  );
+  const prunableCount = workflow.worktrees.filter((worktree) => worktree.prunable).length;
+  const terminalCount = workflow.windows.length;
+  if (!activeSessions.length && !dirtyFiles && !prunableCount && !terminalCount) {
+    return null;
+  }
+
+  const detailParts = [
+    activeSessions.length ? moveCount(activeSessions.length, 'active Codex session') : '',
+    terminalCount ? moveCount(terminalCount, 'terminal lane') : '',
+    dirtyFiles ? moveCount(dirtyFiles, 'dirty file') : '',
+    prunableCount ? moveCount(prunableCount, 'prunable worktree') : '',
+  ].filter(Boolean);
+
+  return {
+    detail: detailParts.join('; '),
+    id: `lane-load:${workflow.id}`,
+    meta: laneLoadMeta(workflow),
+    title: laneLoadTitle(workflow),
+    tone: laneLoadTone(workflow, activeSessions.length, dirtyFiles, prunableCount),
+    workflowId: workflow.id,
+  };
+}
+
+function workflowHasLiveLane(workflow: WorkflowItem) {
+  return Boolean(
+    workflow.sessions.some(isActiveCodexSession) ||
+      workflow.windows.length ||
+      workflow.worktrees.some((worktree) => (worktree.dirtyCount ?? 0) > 0 || worktree.prunable),
+  );
+}
+
+function isActiveCodexSession(session: CodexSessionSummary) {
+  return session.status === 'goal-active' || session.status === 'running';
+}
+
+function laneLoadTitle(workflow: WorkflowItem) {
+  const ticketId = workflow.ticket?.ticketId ?? workflow.linearTicket?.ticketId;
+  if (ticketId) return `${ticketId}: ${truncate(workflow.title, 42)}`;
+  return truncate(workflow.title, 52);
+}
+
+function laneLoadMeta(workflow: WorkflowItem) {
+  if (workflow.intent === 'clean') return 'Cleanup';
+  if (workflow.intent === 'fix-ci') return 'Fix checks';
+  if (workflow.intent === 'ship') return 'Ship';
+  if (workflow.intent === 'review') return 'Review';
+  return INTENT_LABELS[workflow.intent];
+}
+
+function laneLoadTone(
+  workflow: WorkflowItem,
+  activeSessions: number,
+  dirtyFiles: number,
+  prunableCount: number,
+): LaneLoadTone {
+  if (workflow.intent === 'clean' || prunableCount) return 'warn';
+  if (dirtyFiles && !activeSessions) return 'warn';
+  if (workflow.tone === 'hot') return 'over';
+  return 'active';
+}
+
+function laneLoadToneRank(tone: LaneLoadTone) {
+  if (tone === 'over') return 0;
+  if (tone === 'warn') return 1;
+  return 2;
+}
+
+function laneLoadSummary({
+  activeCount,
+  maxActive,
+  recommendedActive,
+}: {
+  activeCount: number;
+  maxActive: number;
+  recommendedActive: number;
+}) {
+  if (activeCount > maxActive) {
+    return `${moveCount(activeCount, 'active lane')}; over max ${maxActive}`;
+  }
+  if (activeCount > recommendedActive) {
+    return `${moveCount(activeCount, 'active lane')}; above planned ${recommendedActive}`;
+  }
+  if (activeCount === recommendedActive) {
+    return `${moveCount(activeCount, 'active lane')}; at plan`;
+  }
+  return `${moveCount(activeCount, 'active lane')}; ${moveCount(recommendedActive - activeCount, 'open slot')}`;
 }
 
 function buildUnlockMap({

@@ -1067,6 +1067,132 @@ button.plan-digest-item {
   border-left-color: var(--green);
 }
 
+.lane-load {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--surface);
+}
+
+.lane-load-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.lane-load-head small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.lane-load-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+}
+
+.lane-load-facts span {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
+  padding: 0.45rem 0.5rem;
+  border-right: 1px solid var(--border);
+}
+
+.lane-load-facts span:last-child {
+  border-right: 0;
+}
+
+.lane-load-facts b {
+  font-size: 0.86rem;
+  line-height: 1.15;
+}
+
+.lane-load-facts em {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-style: normal;
+  text-transform: uppercase;
+}
+
+.lane-load-list {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.lane-load-list > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.lane-load-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: start;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--blue);
+  background: var(--surface-muted);
+  color: var(--foreground);
+  cursor: pointer;
+  text-align: left;
+}
+
+.lane-load-item:hover,
+.lane-load-item:focus-visible {
+  border-color: var(--foreground);
+}
+
+.lane-load-item span {
+  display: grid;
+  min-width: 0;
+  gap: 0.18rem;
+}
+
+.lane-load-item strong,
+.lane-load-item em,
+.lane-load-item small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lane-load-item strong {
+  font-size: 0.78rem;
+}
+
+.lane-load-item em,
+.lane-load-item small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.lane-load-item small {
+  justify-self: end;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.lane-load-item-over {
+  border-left-color: var(--danger);
+}
+
+.lane-load-item-warn {
+  border-left-color: var(--warning);
+}
+
 .handoff-ledger {
   display: grid;
   gap: 0.5rem;
@@ -2216,6 +2342,7 @@ button.plan-item {
   }
 
   .parallel-head,
+  .lane-load-item,
   .handoff-item,
   .unlock-item,
   .parallel-lane,
@@ -2241,6 +2368,29 @@ button.plan-item {
   }
 
   .parallel-next-action > span {
+    text-align: left;
+  }
+
+  .lane-load-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .lane-load-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .lane-load-facts span:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .lane-load-facts span:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--border);
+  }
+
+  .lane-load-head small,
+  .lane-load-item small {
+    justify-self: start;
     text-align: left;
   }
 

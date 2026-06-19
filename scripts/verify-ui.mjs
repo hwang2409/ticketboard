@@ -103,6 +103,14 @@ async function verifyViewport({ width, height, screenshot }) {
     if ((await page.locator('[data-plan-digest-item]').count()) < 1) {
       throw new Error('Expected compact generated plan digest items');
     }
+    await page.waitForSelector('[data-lane-load]', { timeout: 10_000 });
+    const hasLiveLane =
+      dashboard.codexSessions.some((session) => ['goal-active', 'running'].includes(session.status)) ||
+      dashboard.tmuxWindows.length > 0 ||
+      dashboard.worktrees.some((worktree) => (worktree.dirtyCount ?? 0) > 0 || worktree.prunable);
+    if (hasLiveLane && (await page.locator('[data-lane-load-item]').count()) < 1) {
+      throw new Error('Expected lane load panel to render active local lanes');
+    }
     await page.waitForSelector('[data-handoff-ledger]', { timeout: 10_000 });
     if ((await page.locator('[data-handoff-item]').count()) < 1) {
       throw new Error('Expected recent workflow handoffs to render');
