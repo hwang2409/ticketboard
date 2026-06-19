@@ -1230,6 +1230,76 @@ button.plan-digest-item {
   font-size: 0.68rem;
 }
 
+.parallel-batch {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: start;
+  padding: 0.65rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.parallel-batch-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.35rem;
+}
+
+.parallel-batch-copy p {
+  display: grid;
+  gap: 0.18rem;
+  margin: 0;
+}
+
+.parallel-batch-copy strong {
+  overflow: hidden;
+  font-size: 0.88rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parallel-batch-copy em {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.parallel-batch-lanes {
+  display: flex;
+  max-width: 26rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.parallel-batch-lane {
+  display: inline-flex;
+  max-width: 12rem;
+  min-height: 1.7rem;
+  align-items: center;
+  padding: 0.28rem 0.45rem;
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+  color: var(--foreground);
+  cursor: default;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+button.parallel-batch-lane {
+  cursor: pointer;
+}
+
+button.parallel-batch-lane:hover,
+button.parallel-batch-lane:focus-visible {
+  border-color: var(--foreground);
+}
+
 .parallel-lane-list {
   display: grid;
   gap: 0.45rem;
@@ -2073,6 +2143,19 @@ button.plan-item {
 
   .parallel-next-action > span {
     text-align: left;
+  }
+
+  .parallel-batch {
+    grid-template-columns: 1fr;
+  }
+
+  .parallel-batch-copy strong {
+    white-space: normal;
+  }
+
+  .parallel-batch-lanes {
+    max-width: none;
+    justify-content: flex-start;
   }
 
   .parallel-lane-meta {

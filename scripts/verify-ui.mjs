@@ -126,6 +126,10 @@ async function verifyViewport({ width, height, screenshot }) {
       await assertWorkflowBriefSelection(page, workflowBrief);
       if (Array.isArray(workflowBrief.brief?.lanes) && workflowBrief.brief.lanes.length) {
         await page.waitForSelector('[data-parallel-lanes]', { timeout: 10_000 });
+        await page.waitForSelector('[data-parallel-batch]', { timeout: 10_000 });
+        if ((await page.locator('[data-batch-lane]').count()) < 1) {
+          throw new Error('Expected parallel lane panel to name the current safe batch');
+        }
         if ((await page.locator('[data-parallel-lane]').count()) < 1) {
           throw new Error('Expected workflow brief lanes to render in the parallel lane panel');
         }

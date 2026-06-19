@@ -12,6 +12,7 @@ It is designed to answer one question quickly: **what should own focus, what can
 
 - Picks one current workflow from live local and remote signals.
 - Builds a lane plan for focus work, parallel Codex candidates, waiting checkpoints, and cleanup.
+- Names the current safe batch of lanes that can run together without changed-file conflicts.
 - Guards Codex lane actions when focus safety is unknown or files overlap.
 - Offers a next-safe-lane action when one parallel Codex handoff is ready.
 - Shows brief freshness, watcher cadence, lock state, and last evidence fingerprint.

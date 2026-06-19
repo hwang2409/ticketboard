@@ -205,6 +205,20 @@ type ParallelPlan = {
   summary: string;
 };
 
+type ParallelBatchLane = {
+  id: string;
+  label: string;
+  role: ParallelLaneRole;
+  workflowId: string | null;
+};
+
+type ParallelBatch = {
+  detail: string;
+  guardedCount: number;
+  lanes: Array<ParallelBatchLane>;
+  title: string;
+};
+
 type CommandSummary = {
   description: string;
   status: string;
@@ -1465,6 +1479,12 @@ function ParallelLanesPanel({
     lanes: plan.lanes,
     workflows,
   });
+  const batch = parallelBatchFor({
+    dashboard,
+    lanes: plan.lanes,
+    recommendedActive: plan.recommendedActive,
+    workflows,
+  });
 
   return (
     <section className="parallel-lanes" data-parallel-lanes={plan.source}>
@@ -1498,6 +1518,42 @@ function ParallelLanesPanel({
           ) : (
             <span>No safe Codex lane</span>
           )}
+        </div>
+      </div>
+      <div
+        className="parallel-batch"
+        data-guarded-count={batch.guardedCount}
+        data-parallel-batch
+      >
+        <div className="parallel-batch-copy">
+          <span className="section-kicker">Safe batch</span>
+          <p>
+            <strong>{batch.title}</strong>
+            <em>{batch.detail}</em>
+          </p>
+        </div>
+        <div className="parallel-batch-lanes">
+          {batch.lanes.map((lane) => (
+            lane.workflowId ? (
+              <button
+                className={`parallel-batch-lane parallel-role-${lane.role}`}
+                data-batch-lane={lane.id}
+                key={lane.id}
+                onClick={() => onSelect(lane.workflowId as string)}
+                type="button"
+              >
+                {lane.label}
+              </button>
+            ) : (
+              <span
+                className={`parallel-batch-lane parallel-role-${lane.role}`}
+                data-batch-lane={lane.id}
+                key={lane.id}
+              >
+                {lane.label}
+              </span>
+            )
+          ))}
         </div>
       </div>
 
@@ -2431,6 +2487,110 @@ function nextSafeLaneAction({
     }
   }
   return null;
+}
+
+function parallelBatchFor({
+  dashboard,
+  lanes,
+  recommendedActive,
+  workflows,
+}: {
+  dashboard: DashboardData;
+  lanes: Array<ParallelLane>;
+  recommendedActive: number;
+  workflows: Array<WorkflowItem>;
+}): ParallelBatch {
+  const focusLane = lanes.find((lane) => lane.role === 'focus') ?? null;
+  const extraSlots = Math.max(0, recommendedActive - (focusLane ? 1 : 0));
+  const selected: Array<{
+    lane: ParallelLane;
+    paths: Array<string>;
+  }> = [];
+  let guardedCount = 0;
+
+  for (const lane of lanes) {
+    if (lane.role !== 'parallel' && lane.role !== 'cleanup') continue;
+    const workflow = lane.workflowId
+      ? workflows.find((candidate) => candidate.id === lane.workflowId) ?? null
+      : null;
+    const laneAction = laneActionFor({ dashboard, lane, workflow });
+    if (
+      lane.safety.level !== 'safe' ||
+      !laneAction?.guard.runnable ||
+      !automatedActionKind(laneAction.action.request.kind)
+    ) {
+      guardedCount += 1;
+      continue;
+    }
+
+    const paths = changedPathsForLane(lane, workflow);
+    const conflictsWithSelected = selected.some((candidate) =>
+      intersectPaths(paths, candidate.paths).length > 0,
+    );
+    if (conflictsWithSelected) {
+      guardedCount += 1;
+      continue;
+    }
+
+    if (selected.length < extraSlots) {
+      selected.push({ lane, paths });
+    }
+  }
+
+  const batchLanes = [
+    ...(focusLane ? [focusLane] : []),
+    ...selected.map((candidate) => candidate.lane),
+  ];
+  const labels = batchLanes.map(batchLaneLabel);
+  const extraCount = selected.length;
+
+  return {
+    detail: batchDetail({ extraCount, guardedCount, recommendedActive }),
+    guardedCount,
+    lanes: batchLanes.map((lane) => ({
+      id: lane.id,
+      label: batchLaneLabel(lane),
+      role: lane.role,
+      workflowId: lane.workflowId,
+    })),
+    title: labels.length
+      ? labels.join(' + ')
+      : 'No lane is ready to run in parallel',
+  };
+}
+
+function changedPathsForLane(
+  lane: ParallelLane,
+  workflow: WorkflowItem | null,
+) {
+  const workflowPaths = workflow ? workflowChangedPaths(workflow) : [];
+  return workflowPaths.length ? workflowPaths : lane.safety.paths;
+}
+
+function batchLaneLabel(lane: ParallelLane) {
+  const title = truncate(lane.title, 28);
+  return lane.role === 'focus' ? `Focus: ${title}` : title;
+}
+
+function batchDetail({
+  extraCount,
+  guardedCount,
+  recommendedActive,
+}: {
+  extraCount: number;
+  guardedCount: number;
+  recommendedActive: number;
+}) {
+  if (extraCount > 0) {
+    const guarded = guardedCount
+      ? ` ${moveCount(guardedCount, 'lane')} stay guarded.`
+      : ' No guarded runnable lanes remain.';
+    return `${moveCount(recommendedActive, 'active lane')} budget; ${moveCount(extraCount, 'extra Codex lane')} can run beside focus.${guarded}`;
+  }
+  if (guardedCount > 0) {
+    return `${moveCount(recommendedActive, 'active lane')} budget, but every extra lane needs review before it runs beside focus.`;
+  }
+  return `${moveCount(recommendedActive, 'active lane')} budget; no extra Codex lane is queued yet.`;
 }
 
 function automatedActionKind(kind: WorkflowActionRequest['kind']) {
