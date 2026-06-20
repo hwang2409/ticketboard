@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from datetime import UTC, datetime
+from glob import glob
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +17,10 @@ DEFAULT_WORKFLOW_BRIEF_TTL_SECONDS = 10 * 60
 DEFAULT_WORKFLOW_AUTOMATION_INTERVAL_MS = 10 * 60 * 1000
 DEFAULT_WORKFLOW_LOCK_TTL_MS = 30 * 60 * 1000
 MAX_PLAN_DOC_CHARS = 40_000
+MAX_PLAN_DOCS = 6
+MAX_PLAN_DOC_SIGNAL_LINES = 8
 VOLATILE_EVIDENCE_KEYS = {"dashboardGeneratedAt", "generatedAt"}
+TICKET_ID_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]{1,9}-\d+\b")
 
 
 def workflow_brief_path(settings: Settings) -> Path:
@@ -189,7 +194,8 @@ def build_workflow_evidence_snapshot(
     *,
     recent_handoffs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    plan_doc = read_configured_plan_doc()
+    plan_docs = read_configured_plan_docs()
+    plan_doc = plan_docs[0] if plan_docs else None
     snapshot = {
         "version": WORKFLOW_BRIEF_VERSION,
         "generatedAt": utc_now_iso(),
@@ -294,6 +300,8 @@ def build_workflow_evidence_snapshot(
         ),
         "diagnostics": dashboard.get("diagnostics", []),
         "planDoc": plan_doc,
+        "planDocs": plan_docs,
+        "planningSignals": summarize_plan_docs(plan_docs),
         "instructions": {
             "purpose": (
                 "Use this evidence to choose one immediate focus workflow and a "
@@ -767,21 +775,170 @@ def dashboard_contains_target(dashboard: dict[str, Any], target_id: str) -> bool
     return True
 
 
-def read_configured_plan_doc() -> dict[str, Any] | None:
-    raw_path = os.environ.get("TICKETBOARD_PLAN_DOC_PATH", "").strip()
-    if not raw_path:
-        return None
-    path = Path(raw_path).expanduser()
+def read_configured_plan_docs() -> list[dict[str, Any]]:
+    paths = configured_plan_doc_paths()
+    docs: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for path in paths:
+        key = str(path.expanduser())
+        if key in seen:
+            continue
+        seen.add(key)
+        docs.append(read_plan_doc(path))
+        if len(docs) >= MAX_PLAN_DOCS:
+            break
+    return docs
+
+
+def configured_plan_doc_paths() -> list[Path]:
+    configured: list[Path] = []
+    for raw_value in (
+        os.environ.get("TICKETBOARD_PLAN_DOC_PATH", ""),
+        os.environ.get("TICKETBOARD_PLAN_DOC_PATHS", ""),
+    ):
+        configured.extend(Path(part).expanduser() for part in split_doc_config(raw_value))
+
+    for pattern in split_doc_config(os.environ.get("TICKETBOARD_PLAN_DOC_GLOBS", "")):
+        configured.extend(
+            Path(match).expanduser() for match in glob(os.path.expanduser(pattern))
+        )
+
+    return configured
+
+
+def split_doc_config(raw_value: str) -> list[str]:
+    normalized = raw_value.replace("\n", ",")
+    parts: list[str] = []
+    for chunk in normalized.split(","):
+        if os.pathsep in chunk:
+            parts.extend(piece.strip() for piece in chunk.split(os.pathsep))
+        else:
+            parts.append(chunk.strip())
+    return [part for part in parts if part]
+
+
+def read_plan_doc(path: Path) -> dict[str, Any]:
+    expanded = path.expanduser()
     try:
-        text = path.read_text(errors="replace")
+        text = expanded.read_text(errors="replace")
     except FileNotFoundError:
-        return {"path": str(path), "error": "Plan document not found."}
+        return {"path": str(expanded), "error": "Plan document not found."}
     truncated = len(text) > MAX_PLAN_DOC_CHARS
     return {
-        "path": str(path),
+        "path": str(expanded),
         "content": text[:MAX_PLAN_DOC_CHARS],
+        "signals": plan_doc_signals(text),
         "truncated": truncated,
     }
+
+
+def summarize_plan_docs(plan_docs: list[dict[str, Any]]) -> dict[str, Any]:
+    ticket_ids: set[str] = set()
+    sections: list[dict[str, Any]] = []
+    docs: list[dict[str, Any]] = []
+    for doc in plan_docs:
+        signals = doc.get("signals") if isinstance(doc.get("signals"), dict) else {}
+        doc_ticket_ids = [
+            ticket_id
+            for ticket_id in signals.get("ticketIds", [])
+            if isinstance(ticket_id, str)
+        ]
+        ticket_ids.update(doc_ticket_ids)
+        doc_sections = [
+            section
+            for section in signals.get("sections", [])
+            if isinstance(section, dict)
+        ]
+        sections.extend(
+            {
+                "docPath": doc.get("path"),
+                "heading": section.get("heading"),
+                "items": section.get("items", []),
+                "kind": section.get("kind"),
+            }
+            for section in doc_sections[:3]
+        )
+        docs.append(
+            {
+                "error": doc.get("error"),
+                "path": doc.get("path"),
+                "sectionCount": len(doc_sections),
+                "ticketIds": doc_ticket_ids[:12],
+                "title": signals.get("title"),
+                "truncated": doc.get("truncated"),
+            },
+        )
+
+    return {
+        "docCount": len(plan_docs),
+        "docs": docs,
+        "sections": sections[:12],
+        "ticketIds": sorted(ticket_ids),
+    }
+
+
+def plan_doc_signals(text: str) -> dict[str, Any]:
+    ticket_ids = sorted(set(TICKET_ID_PATTERN.findall(text)))
+    headings: list[str] = []
+    sections: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        heading_match = re.match(r"^(#{1,4})\s+(.+)$", line)
+        if heading_match:
+            heading = heading_match.group(2).strip()
+            headings.append(heading)
+            kind = plan_section_kind(heading)
+            current = (
+                {
+                    "heading": heading,
+                    "items": [],
+                    "kind": kind,
+                }
+                if kind
+                else None
+            )
+            if current:
+                sections.append(current)
+            continue
+        if current and len(current["items"]) < MAX_PLAN_DOC_SIGNAL_LINES:
+            item = normalize_plan_doc_line(line)
+            if item:
+                current["items"].append(item)
+
+    return {
+        "headings": headings[:20],
+        "sections": [section for section in sections if section["items"]][:12],
+        "ticketIds": ticket_ids[:40],
+        "title": headings[0] if headings else None,
+    }
+
+
+def plan_section_kind(heading: str) -> str | None:
+    normalized = heading.lower()
+    if any(word in normalized for word in ("done", "completed", "shipped", "merged")):
+        return "done"
+    if any(word in normalized for word in ("now", "current", "focus", "doing")):
+        return "now"
+    if any(word in normalized for word in ("next", "todo", "upcoming", "queued")):
+        return "next"
+    if any(word in normalized for word in ("block", "risk", "stale", "question")):
+        return "blocked"
+    if "clean" in normalized or "follow" in normalized:
+        return "cleanup"
+    return None
+
+
+def normalize_plan_doc_line(line: str) -> str | None:
+    cleaned = re.sub(r"^[-*+]\s+", "", line)
+    cleaned = re.sub(r"^\d+[.)]\s+", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned:
+        return None
+    return cleaned[:240]
 
 
 def utc_now_iso() -> str:

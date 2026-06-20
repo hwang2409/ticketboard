@@ -737,16 +737,29 @@ function validateWorkflowBriefShape(response) {
 
 function validateWorkflowEvidenceShape(response) {
   const recentHandoffs = response?.snapshot?.recentHandoffs;
+  const planDocs = response?.snapshot?.planDocs;
+  const planningSignals = response?.snapshot?.planningSignals;
   const prs = response?.snapshot?.prs;
   if (
     !response ||
     typeof response !== 'object' ||
     typeof response.path !== 'string' ||
     typeof response.fingerprint !== 'string' ||
+    !Array.isArray(planDocs) ||
+    !planningSignals ||
+    typeof planningSignals !== 'object' ||
+    !Array.isArray(planningSignals.docs) ||
+    !Array.isArray(planningSignals.sections) ||
+    !Array.isArray(planningSignals.ticketIds) ||
     !Array.isArray(recentHandoffs) ||
     !Array.isArray(prs)
   ) {
-    throw new Error('Expected workflow evidence snapshot to include recent handoffs and PRs');
+    throw new Error('Expected workflow evidence snapshot to include plan docs, recent handoffs, and PRs');
+  }
+  for (const [index, doc] of planDocs.entries()) {
+    if (!doc || typeof doc !== 'object' || typeof doc.path !== 'string') {
+      throw new Error(`Expected workflow evidence plan doc ${index} to include a path`);
+    }
   }
   for (const [index, pr] of prs.entries()) {
     if (!pr || typeof pr !== 'object' || !Array.isArray(pr.files)) {

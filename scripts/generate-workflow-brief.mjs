@@ -122,7 +122,7 @@ Before deciding, verify the live tmux state directly:
 Do not edit source files. Only write the workflow brief JSON file below:
 ${briefPath}
 
-Model this like Henry's daily engineering workflow: several Codex/tmux lanes may be active at once, but only one lane should own focus. Choose exactly one immediate "now" focus move, then build a parallel lane plan for the other work that can proceed, wait, or be cleaned up. Prefer live failing checks, active tmux/worktree lanes, and review state over quiet strategic backlog. Use PR files and worktree status lines to judge file overlap or shared code areas before marking a lane parallel-safe. Use recentHandoffs and each handoff.outcome as orchestration memory: if Ticketboard just launched/resumed/opened a lane and the outcome is live or quiet, do not recommend launching the same lane again unless newer live evidence proves it needs another action. If Linear projects/docs imply one sequence but live PR/tmux/handoff evidence says another, explain the mismatch in staleSignals or notes.
+Model this like Henry's daily engineering workflow: several Codex/tmux lanes may be active at once, but only one lane should own focus. Choose exactly one immediate "now" focus move, then build a parallel lane plan for the other work that can proceed, wait, or be cleaned up. Prefer live failing checks, active tmux/worktree lanes, and review state over quiet strategic backlog. Use PR files and worktree status lines to judge file overlap or shared code areas before marking a lane parallel-safe. Use recentHandoffs and each handoff.outcome as orchestration memory: if Ticketboard just launched/resumed/opened a lane and the outcome is live or quiet, do not recommend launching the same lane again unless newer live evidence proves it needs another action. Use planDocs and planningSignals as the orchestrator memory layer: compare their done/current/next/blocked sections with live Linear, PR, tmux, worktree, and Codex evidence. If Linear projects/docs imply one sequence but live PR/tmux/handoff evidence says another, explain the mismatch in staleSignals or notes.
 
 Write JSON matching this schema:
 {
@@ -132,7 +132,8 @@ Write JSON matching this schema:
     "evidenceSnapshotPath": "${snapshotPath}",
     "evidenceFingerprint": "${evidenceFingerprint}",
     "dashboardGeneratedAt": "<from snapshot>",
-    "planDocPath": "<from snapshot planDoc.path or null>"
+    "planDocPath": "<from snapshot planDoc.path or null>",
+    "planDocPaths": ["<from snapshot planDocs[].path>"]
   },
   "operatingMode": {
     "summary": "One sentence describing how to run the next hour of work",

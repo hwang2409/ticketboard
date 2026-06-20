@@ -74,7 +74,7 @@ pnpm brief:watch
 
 `brief:watch` checks the current brief status, skips work while the brief is fresh, and runs one generator at a time using a local lock file. When a brief is stale only because of age, the watcher compares a stable evidence fingerprint first; if nothing meaningful changed, it refreshes the existing brief without starting another Codex process. The generator uses non-interactive `codex exec` with JSON output and terminal color disabled, so it can run under `make dev` without terminal stdin. The default cadence is roughly 10 minutes. Use `--once` for a single check, `--force` to ignore freshness/fingerprints, `--rerun-on-preview-change` to include tmux pane previews in the fingerprint, or `--no-yolo` if you need Codex to ask for approvals.
 
-The generated brief is written to `TICKETBOARD_WORKFLOW_BRIEF_PATH`, then read by the dashboard on refresh. `TICKETBOARD_PLAN_DOC_PATH` is optional; when set, it adds one local planning document to the evidence snapshot, but the app does not hardcode any specific plan file.
+The generated brief is written to `TICKETBOARD_WORKFLOW_BRIEF_PATH`, then read by the dashboard on refresh. `TICKETBOARD_PLAN_DOC_PATH`, `TICKETBOARD_PLAN_DOC_PATHS`, and `TICKETBOARD_PLAN_DOC_GLOBS` are optional; when set, Ticketboard adds those local planning documents plus extracted done/current/next/blocked signals to the Codex evidence snapshot, but the app does not hardcode any specific plan file.
 
 Codex runs with the `--yolo`-equivalent `codex exec` permission bypass flags by default for this workflow, so only run the watcher in repositories and environments where that level of local permission is acceptable. `make dev` keeps the dashboard server running if the optional brief watcher exits.
 
@@ -90,6 +90,8 @@ Create `.env` from `.env.example` when you want local overrides. The defaults ar
 | `TICKETBOARD_ACTION_SESSION` | tmux session used for new workflow lanes. |
 | `TICKETBOARD_WORKTREE_ROOT` | Directory where new ticket worktrees are created. |
 | `TICKETBOARD_PLAN_DOC_PATH` | Optional planning document included in Codex evidence snapshots. |
+| `TICKETBOARD_PLAN_DOC_PATHS` | Optional comma- or path-list of additional planning documents for Codex evidence. |
+| `TICKETBOARD_PLAN_DOC_GLOBS` | Optional comma-separated glob patterns for planning documents. |
 | `TICKETBOARD_WORKFLOW_BRIEF_PATH` | JSON file written by local Codex and read by the app. |
 | `TICKETBOARD_WORKFLOW_SNAPSHOT_PATH` | Evidence snapshot written by Ticketboard for Codex. |
 | `TICKETBOARD_WORKFLOW_FINGERPRINT_PATH` | Optional sidecar path for the last evidence fingerprint used by Codex automation. |
