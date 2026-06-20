@@ -315,6 +315,7 @@ async function verifyViewport({ width, height, screenshot }) {
 
   await page.screenshot({ fullPage: true, path: screenshot, timeout: SCREENSHOT_TIMEOUT_MS });
   try {
+    await verifySafeBatchRevalidation(page, dashboard, workflowBrief);
     await verifyMockedActionAdvance(page, workflowBrief.status === 'ready');
   } finally {
     await page
@@ -441,6 +442,75 @@ async function verifyMockedActionAdvance(page, briefPinsSelection) {
     beforeId,
     { timeout: 15_000 },
   );
+}
+
+async function verifySafeBatchRevalidation(page, dashboard, workflowBrief) {
+  const batchAction = page.locator('[data-testid="run-safe-batch"]').first();
+  if ((await batchAction.count()) < 1) return;
+
+  const events = [];
+  const dashboardHandler = async (route) => {
+    const request = route.request();
+    const url = new globalThis.URL(request.url());
+    if (url.pathname === '/api/dashboard' && url.searchParams.get('refresh') === '1') {
+      events.push('dashboard-refresh');
+      await route.fulfill({
+        body: JSON.stringify(dashboard),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    await route.continue();
+  };
+  const briefHandler = async (route) => {
+    const request = route.request();
+    const url = new globalThis.URL(request.url());
+    if (url.pathname === '/api/workflow-brief' && url.searchParams.get('refresh') === '1') {
+      events.push('brief-refresh');
+      await route.fulfill({
+        body: JSON.stringify(workflowBrief),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    await route.continue();
+  };
+  const actionHandler = async (route) => {
+    events.push('workflow-action');
+    await route.fulfill({
+      body: JSON.stringify({
+        error: 'Mock stop after preflight.',
+        ok: false,
+      }),
+      contentType: 'application/json',
+      status: 409,
+    });
+  };
+
+  await page.route('**/api/dashboard**', dashboardHandler);
+  await page.route('**/api/workflow-brief**', briefHandler);
+  await page.route('**/api/workflow-action', actionHandler);
+  try {
+    await batchAction.click();
+    await page.waitForSelector('text=Batch stopped', { timeout: 10_000 });
+  } finally {
+    await page.unroute('**/api/dashboard**', dashboardHandler).catch(() => undefined);
+    await page.unroute('**/api/workflow-brief**', briefHandler).catch(() => undefined);
+    await page.unroute('**/api/workflow-action', actionHandler).catch(() => undefined);
+  }
+
+  const actionIndex = events.indexOf('workflow-action');
+  if (actionIndex < 0) {
+    throw new Error('Expected safe batch runner to attempt a workflow action after revalidation');
+  }
+  for (const required of ['dashboard-refresh', 'brief-refresh']) {
+    const index = events.indexOf(required);
+    if (index < 0 || index > actionIndex) {
+      throw new Error(`Expected safe batch runner to ${required} before workflow-action; got ${events.join(', ')}`);
+    }
+  }
 }
 
 async function verifyUserStateApi(page) {

@@ -20,7 +20,7 @@ It is designed to answer one question quickly: **what should own focus, what can
 - Names the current safe batch of lanes that can run together without changed-file conflicts.
 - Explains why each parallel lane is ready, guarded, or waiting in the batch decision trail.
 - Copies a safe-batch packet with run-now lanes, decision trail, and guardrails.
-- Runs every currently safe automated lane in the batch with one explicit guarded action.
+- Revalidates live dashboard and brief state before running every currently safe automated lane in the batch.
 - Guards Codex lane actions when focus safety is unknown, files overlap, or lane capacity is full.
 - Uses PR files and worktree status to flag shared code areas before running parallel lanes.
 - Offers a next-safe-lane action when one parallel Codex handoff is ready.
