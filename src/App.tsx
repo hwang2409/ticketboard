@@ -106,6 +106,11 @@ type BatchActionButtonState = ActionButtonState & {
   total: number;
 };
 
+type WorkflowActionErrorPayload = Partial<WorkflowActionResponse> & {
+  detail?: { error?: string } | string;
+  error?: string;
+};
+
 type PlannedWorkflowAction = {
   advanceOnSuccess?: boolean;
   label: string;
@@ -2594,11 +2599,9 @@ function WorkflowActionButton({
         headers: { 'content-type': 'application/json' },
         method: 'POST',
       });
-      const payload = (await response.json()) as Partial<WorkflowActionResponse> & {
-        error?: string;
-      };
+      const payload = (await response.json()) as WorkflowActionErrorPayload;
       if (!response.ok || !payload.ok) {
-        throw new Error(payload.error ?? `Action failed with ${response.status}`);
+        throw new Error(workflowActionErrorMessage(payload, response.status));
       }
       setState({
         message: action.advanceOnSuccess
@@ -2650,6 +2653,22 @@ function WorkflowActionButton({
       ) : null}
     </>
   );
+}
+
+function workflowActionErrorMessage(payload: WorkflowActionErrorPayload, status: number) {
+  if (payload.error) return payload.error;
+  if (typeof payload.detail === 'string' && payload.detail.trim()) {
+    return payload.detail;
+  }
+  if (
+    payload.detail &&
+    typeof payload.detail === 'object' &&
+    typeof payload.detail.error === 'string' &&
+    payload.detail.error.trim()
+  ) {
+    return payload.detail.error;
+  }
+  return `Action failed with ${status}`;
 }
 
 function BatchWorkflowActionButton({
@@ -2723,12 +2742,10 @@ function BatchWorkflowActionButton({
           headers: { 'content-type': 'application/json' },
           method: 'POST',
         });
-        const payload = (await response.json()) as Partial<WorkflowActionResponse> & {
-          error?: string;
-        };
+        const payload = (await response.json()) as WorkflowActionErrorPayload;
         if (!response.ok || !payload.ok) {
           throw new Error(
-            `${item.workflow.title}: ${payload.error ?? `Action failed with ${response.status}`}`,
+            `${item.workflow.title}: ${workflowActionErrorMessage(payload, response.status)}`,
           );
         }
         completed.push(item.workflow);

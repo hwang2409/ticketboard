@@ -481,8 +481,7 @@ async function verifySafeBatchRevalidation(page, dashboard, workflowBrief) {
     events.push('workflow-action');
     await route.fulfill({
       body: JSON.stringify({
-        error: 'Mock stop after preflight.',
-        ok: false,
+        detail: { error: 'Mock stop after preflight.' },
       }),
       contentType: 'application/json',
       status: 409,

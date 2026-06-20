@@ -223,6 +223,8 @@ WORKFLOW_ACTION_KINDS = {
     "resume-codex",
     "start-lane",
 }
+CODEX_START_ACTION_KINDS = {"launch-codex", "start-lane"}
+ACTIVE_CODEX_STATUSES = {"goal-active", "running"}
 MAX_ACTION_PROMPT_CHARS = 16_000
 MAX_HANDOFF_EVENTS = 30
 
@@ -846,7 +848,7 @@ def record_workflow_handoff(payload: dict[str, Any], result: dict[str, Any]) -> 
 @app.post("/api/workflow-action")
 async def api_workflow_action(payload: dict[str, Any], request: Request) -> Response:
     try:
-        dashboard = await dashboard_for_action()
+        dashboard = await dashboard_for_action(payload)
         result = await asyncio.to_thread(run_workflow_action, dashboard, payload)
         try:
             await asyncio.to_thread(record_workflow_handoff, payload, result)
@@ -861,7 +863,12 @@ async def api_workflow_action(payload: dict[str, Any], request: Request) -> Resp
         raise api_error(exc, "Unable to run workflow action") from exc
 
 
-async def dashboard_for_action() -> dict[str, Any]:
+async def dashboard_for_action(payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    payload = payload or {}
+    kind = str(payload.get("kind") or "").strip()
+    if kind in CODEX_START_ACTION_KINDS and not bool(payload.get("dryRun")):
+        return await asyncio.to_thread(collect_dashboard, settings)
+
     data, *_ = await dashboard_cache.snapshot()
     if isinstance(data, dict):
         return data
@@ -879,6 +886,8 @@ def run_workflow_action(
     if kind not in WORKFLOW_ACTION_KINDS:
         raise ValueError("Invalid workflow action")
     dry_run = bool(payload.get("dryRun"))
+    if not dry_run and kind in CODEX_START_ACTION_KINDS:
+        require_no_duplicate_codex_lane(dashboard, payload, kind)
 
     if kind == "focus-tmux":
         session = str(payload.get("session") or "").strip()
@@ -1416,6 +1425,146 @@ def known_paths(dashboard: dict[str, Any]) -> set[Path]:
         if isinstance(session, dict) and session.get("cwd"):
             paths.add(Path(str(session["cwd"])).expanduser().resolve(strict=False))
     return paths
+
+
+def require_no_duplicate_codex_lane(
+    dashboard: dict[str, Any],
+    payload: dict[str, Any],
+    kind: str,
+) -> None:
+    ticket_ids = workflow_action_ticket_ids(dashboard, payload)
+    cwd = optional_action_path(payload.get("cwd"))
+    start_path = start_lane_guard_path(payload) if kind == "start-lane" else None
+    conflicts = live_lane_conflicts(dashboard, ticket_ids, cwd, start_path, kind)
+    if not conflicts:
+        return
+    target = ", ".join(sorted(ticket_ids))
+    if not target and cwd:
+        target = short_action_path(cwd)
+    if not target and start_path:
+        target = short_action_path(start_path)
+    if not target:
+        target = "this workflow"
+    raise ValueError(
+        "A live lane already exists for "
+        f"{target}: {', '.join(conflicts[:3])}. "
+        "Focus or resume the existing lane instead of starting another Codex lane.",
+    )
+
+
+def workflow_action_ticket_ids(
+    dashboard: dict[str, Any],
+    payload: dict[str, Any],
+) -> set[str]:
+    ticket_ids: set[str] = set()
+    if ticket_id := optional_ticket_id(payload):
+        ticket_ids.add(ticket_id)
+
+    workflow_id = str(payload.get("workflowId") or "").strip()
+    if workflow_id.startswith("ticket:"):
+        ticket_ids.add(workflow_id.removeprefix("ticket:").upper())
+
+    pr_number = optional_pr_number(payload)
+    if pr_number is None and workflow_id.startswith("pr:"):
+        try:
+            pr_number = int(workflow_id.removeprefix("pr:"))
+        except ValueError:
+            pr_number = None
+    if pr_number is not None:
+        ticket_ids.update(pr_ticket_ids(dashboard, pr_number))
+
+    return {ticket_id for ticket_id in ticket_ids if ticket_id}
+
+
+def pr_ticket_ids(dashboard: dict[str, Any], pr_number: int) -> set[str]:
+    for pr in dashboard.get("prs", []):
+        if not isinstance(pr, dict) or pr.get("number") != pr_number:
+            continue
+        return {
+            str(ticket_id).upper()
+            for ticket_id in pr.get("ticketIds", [])
+            if str(ticket_id).strip()
+        }
+    return set()
+
+
+def live_lane_conflicts(
+    dashboard: dict[str, Any],
+    ticket_ids: set[str],
+    cwd: Path | None,
+    start_path: Path | None,
+    kind: str,
+) -> list[str]:
+    conflicts: list[str] = []
+    for session in dashboard.get("codexSessions", []):
+        if not isinstance(session, dict) or not is_active_codex_session_summary(session):
+            continue
+        if lane_summary_matches(session, ticket_ids, cwd):
+            conflicts.append(
+                f"Codex {str(session.get('threadId') or '')[:8] or 'session'}",
+            )
+
+    for window in dashboard.get("tmuxWindows", []):
+        if not isinstance(window, dict):
+            continue
+        if lane_summary_matches(window, ticket_ids, cwd):
+            label = f"{window.get('session')}:{window.get('index')}"
+            conflicts.append(f"tmux {label}")
+
+    if kind == "start-lane":
+        for worktree in dashboard.get("worktrees", []):
+            if not isinstance(worktree, dict):
+                continue
+            if lane_summary_matches(worktree, ticket_ids, start_path):
+                path = optional_action_path(worktree.get("path"))
+                conflicts.append(f"worktree {short_action_path(path) if path else 'lane'}")
+
+    return dedupe_preserve_order(conflicts)
+
+
+def lane_summary_matches(
+    item: dict[str, Any],
+    ticket_ids: set[str],
+    path: Path | None,
+) -> bool:
+    if ticket_ids:
+        item_ticket_ids = {
+            str(ticket_id).upper()
+            for ticket_id in item.get("ticketIds", [])
+            if str(ticket_id).strip()
+        }
+        if not ticket_ids.isdisjoint(item_ticket_ids):
+            return True
+    item_path = optional_action_path(item.get("cwd") or item.get("path"))
+    return path is not None and item_path == path
+
+
+def optional_action_path(value: Any) -> Path | None:
+    if not value:
+        return None
+    return Path(str(value)).expanduser().resolve(strict=False)
+
+
+def start_lane_guard_path(payload: dict[str, Any]) -> Path | None:
+    ticket_id = optional_ticket_id(payload)
+    if not ticket_id:
+        return None
+    return start_lane_path(payload, ticket_id).resolve(strict=False)
+
+
+def is_active_codex_session_summary(session: dict[str, Any]) -> bool:
+    return session.get("status") in ACTIVE_CODEX_STATUSES
+
+
+def dedupe_preserve_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
 
 
 def short_action_path(path: Path) -> str:
