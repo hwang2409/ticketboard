@@ -122,7 +122,7 @@ Before deciding, verify the live tmux state directly:
 Do not edit source files. Only write the workflow brief JSON file below:
 ${briefPath}
 
-Model this like Henry's daily engineering workflow: several Codex/tmux lanes may be active at once, but only one lane should own focus. Choose exactly one immediate "now" focus move, then build a parallel lane plan for the other work that can proceed, wait, or be cleaned up. Prefer live failing checks, active tmux/worktree lanes, and review state over quiet strategic backlog. Use recentHandoffs and each handoff.outcome as orchestration memory: if Ticketboard just launched/resumed/opened a lane and the outcome is live or quiet, do not recommend launching the same lane again unless newer live evidence proves it needs another action. If Linear projects/docs imply one sequence but live PR/tmux/handoff evidence says another, explain the mismatch in staleSignals or notes.
+Model this like Henry's daily engineering workflow: several Codex/tmux lanes may be active at once, but only one lane should own focus. Choose exactly one immediate "now" focus move, then build a parallel lane plan for the other work that can proceed, wait, or be cleaned up. Prefer live failing checks, active tmux/worktree lanes, and review state over quiet strategic backlog. Use PR files and worktree status lines to judge file overlap or shared code areas before marking a lane parallel-safe. Use recentHandoffs and each handoff.outcome as orchestration memory: if Ticketboard just launched/resumed/opened a lane and the outcome is live or quiet, do not recommend launching the same lane again unless newer live evidence proves it needs another action. If Linear projects/docs imply one sequence but live PR/tmux/handoff evidence says another, explain the mismatch in staleSignals or notes.
 
 Write JSON matching this schema:
 {
@@ -196,7 +196,7 @@ Rules:
 - Output valid JSON only in ${briefPath}; no markdown wrapper.
 - workflowId should match Ticketboard when possible: ticket:<ticketId>, pr:<number>, session:<threadId>, or worktree:<path>.
 - lanes must include the focus lane and should include useful parallel/waiting/cleanup lanes when live evidence supports them.
-- Mark parallelSafe true only when the lane can run without depending on or overwriting the focus lane.
+- Mark parallelSafe true only when the lane can run without depending on or overwriting the focus lane; cite changed files or explain why file evidence is unavailable.
 - Account for recentHandoffs and handoff.outcome in now, lanes, next, and staleSignals so the brief acts like an updated project plan after each handoff.
 - Keep every title/action/why short enough to scan.
 - Evidence must cite actual snapshot or tmux observations.

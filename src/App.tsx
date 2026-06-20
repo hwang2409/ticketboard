@@ -258,6 +258,7 @@ type ParallelSafety = {
   label: string;
   level: ParallelSafetyLevel;
   paths: Array<string>;
+  zones: Array<string>;
 };
 
 type ParallelPlan = {
@@ -2509,6 +2510,7 @@ function analyzeParallelSafety({
       label: 'Focus owner',
       level: 'focus',
       paths: [],
+      zones: [],
     };
   }
 
@@ -2518,6 +2520,7 @@ function analyzeParallelSafety({
       label: 'Checkpoint',
       level: 'waiting',
       paths: [],
+      zones: [],
     };
   }
 
@@ -2527,12 +2530,16 @@ function analyzeParallelSafety({
       label: 'Watch only',
       level: 'waiting',
       paths: [],
+      zones: [],
     };
   }
 
   const candidatePaths = workflowChangedPaths(candidate);
   const focusPaths = focus ? workflowChangedPaths(focus) : [];
   const overlap = intersectPaths(candidatePaths, focusPaths);
+  const candidateZones = changedPathZones(candidatePaths);
+  const focusZones = changedPathZones(focusPaths);
+  const sharedZones = intersectPaths(candidateZones, focusZones);
 
   if (overlap.length) {
     return {
@@ -2540,6 +2547,17 @@ function analyzeParallelSafety({
       label: 'File overlap',
       level: 'blocked',
       paths: overlap,
+      zones: sharedZones,
+    };
+  }
+
+  if (candidatePaths.length && focusPaths.length && sharedZones.length) {
+    return {
+      detail: `Shares ${sharedZones.slice(0, 3).join(', ')} with focus; no exact file overlap across ${moveCount(candidatePaths.length, 'lane file')}.`,
+      label: 'Same area',
+      level: 'unknown',
+      paths: candidatePaths.slice(0, 6),
+      zones: sharedZones,
     };
   }
 
@@ -2549,6 +2567,7 @@ function analyzeParallelSafety({
       label: 'No file overlap',
       level: 'safe',
       paths: candidatePaths.slice(0, 6),
+      zones: candidateZones.slice(0, 6),
     };
   }
 
@@ -2558,6 +2577,7 @@ function analyzeParallelSafety({
       label: 'Brief-safe',
       level: 'safe',
       paths: candidatePaths.slice(0, 6),
+      zones: candidateZones.slice(0, 6),
     };
   }
 
@@ -2567,6 +2587,7 @@ function analyzeParallelSafety({
       label: 'Serialized',
       level: 'blocked',
       paths: [],
+      zones: [],
     };
   }
 
@@ -2578,6 +2599,7 @@ function analyzeParallelSafety({
       label: candidatePaths.length ? 'Cleanup-safe' : 'Check first',
       level: candidatePaths.length ? 'safe' : 'unknown',
       paths: candidatePaths.slice(0, 6),
+      zones: candidateZones.slice(0, 6),
     };
   }
 
@@ -2588,6 +2610,7 @@ function analyzeParallelSafety({
     label: 'Verify first',
     level: 'unknown',
     paths: candidatePaths.slice(0, 6),
+    zones: candidateZones.slice(0, 6),
   };
 }
 
@@ -2601,6 +2624,7 @@ function safetyFromBriefHint(
       label: 'Focus owner',
       level: 'focus',
       paths: [],
+      zones: [],
     };
   }
   if (item.parallelSafe === true) {
@@ -2609,6 +2633,7 @@ function safetyFromBriefHint(
       label: 'Brief-safe',
       level: 'safe',
       paths: [],
+      zones: [],
     };
   }
   if (role === 'waiting') {
@@ -2617,6 +2642,7 @@ function safetyFromBriefHint(
       label: 'Checkpoint',
       level: 'waiting',
       paths: [],
+      zones: [],
     };
   }
   return {
@@ -2624,6 +2650,7 @@ function safetyFromBriefHint(
     label: item.parallelSafe === false ? 'Serialized' : 'Verify first',
     level: item.parallelSafe === false ? 'blocked' : 'unknown',
     paths: [],
+    zones: [],
   };
 }
 
@@ -2668,6 +2695,24 @@ function normalizeChangedPath(value: string | null | undefined) {
   const trimmed = String(value ?? '').trim();
   if (!trimmed) return null;
   return trimmed.replace(/^\.\/+/u, '');
+}
+
+function changedPathZones(paths: Array<string>) {
+  const zones = new Set<string>();
+  for (const path of paths) {
+    const zone = changedPathZone(path);
+    if (zone) zones.add(zone);
+  }
+  return [...zones].sort((left, right) => left.localeCompare(right));
+}
+
+function changedPathZone(path: string) {
+  const normalized = normalizeChangedPath(path);
+  if (!normalized) return null;
+  const parts = normalized.split('/').filter(Boolean);
+  if (!parts.length) return null;
+  if (parts.length === 1) return parts[0];
+  return parts.slice(0, -1).join('/');
 }
 
 function intersectPaths(left: Array<string>, right: Array<string>) {

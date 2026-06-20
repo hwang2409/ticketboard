@@ -723,14 +723,21 @@ function validateWorkflowBriefShape(response) {
 
 function validateWorkflowEvidenceShape(response) {
   const recentHandoffs = response?.snapshot?.recentHandoffs;
+  const prs = response?.snapshot?.prs;
   if (
     !response ||
     typeof response !== 'object' ||
     typeof response.path !== 'string' ||
     typeof response.fingerprint !== 'string' ||
-    !Array.isArray(recentHandoffs)
+    !Array.isArray(recentHandoffs) ||
+    !Array.isArray(prs)
   ) {
-    throw new Error('Expected workflow evidence snapshot to include recent handoffs');
+    throw new Error('Expected workflow evidence snapshot to include recent handoffs and PRs');
+  }
+  for (const [index, pr] of prs.entries()) {
+    if (!pr || typeof pr !== 'object' || !Array.isArray(pr.files)) {
+      throw new Error(`Expected workflow evidence PR ${index} to include changed files`);
+    }
   }
   for (const [index, handoff] of recentHandoffs.entries()) {
     if (

@@ -246,6 +246,7 @@ def build_workflow_evidence_snapshot(
                 "updatedAt": pr.get("updatedAt"),
                 "reviewComments": len(pr.get("reviewComments", [])),
                 "latestReviews": pr.get("latestReviews", [])[:3],
+                "files": summarize_pr_files(pr.get("files", [])),
             }
             for pr in dashboard.get("prs", [])
         ],
@@ -328,6 +329,24 @@ def summarize_recent_handoffs(
                 "message": item.get("message"),
                 "ranAt": item.get("ranAt"),
                 "outcome": handoff_outcome(item, dashboard),
+            },
+        )
+    return summarized
+
+
+def summarize_pr_files(files: Any) -> list[dict[str, Any]]:
+    if not isinstance(files, list):
+        return []
+    summarized = []
+    for item in files[:40]:
+        if not isinstance(item, dict):
+            continue
+        summarized.append(
+            {
+                "path": item.get("path"),
+                "changeType": item.get("changeType"),
+                "additions": item.get("additions"),
+                "deletions": item.get("deletions"),
             },
         )
     return summarized
