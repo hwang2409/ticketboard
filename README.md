@@ -16,6 +16,7 @@ It is designed to answer one question quickly: **what should own focus, what can
 - Builds a lane plan for focus work, parallel Codex candidates, waiting checkpoints, and cleanup.
 - Names the current safe batch of lanes that can run together without changed-file conflicts.
 - Explains why each parallel lane is ready, guarded, or waiting in the batch decision trail.
+- Copies a safe-batch packet with run-now lanes, decision trail, and guardrails.
 - Guards Codex lane actions when focus safety is unknown, files overlap, or lane capacity is full.
 - Offers a next-safe-lane action when one parallel Codex handoff is ready.
 - Shows brief freshness, watcher cadence, lock state, and last evidence fingerprint.

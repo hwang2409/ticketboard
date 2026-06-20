@@ -1490,6 +1490,24 @@ button.unlock-item:focus-visible {
   line-height: 1.35;
 }
 
+.parallel-batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.parallel-batch-copy-button {
+  min-height: 1.8rem;
+  padding: 0.32rem 0.5rem;
+  font-size: 0.68rem;
+}
+
+.parallel-batch-actions .action-result {
+  min-height: 1.8rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.66rem;
+}
+
 .parallel-batch-lanes {
   display: flex;
   max-width: 26rem;

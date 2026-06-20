@@ -1664,6 +1664,7 @@ function ParallelLanesPanel({
     recommendedActive: plan.recommendedActive,
     workflows,
   });
+  const batchPacket = buildParallelBatchPacket({ batch, dashboard, plan, workflows });
 
   return (
     <section className="parallel-lanes" data-parallel-lanes={plan.source}>
@@ -1710,6 +1711,15 @@ function ParallelLanesPanel({
             <strong>{batch.title}</strong>
             <em>{batch.detail}</em>
           </p>
+          <div className="parallel-batch-actions">
+            <CopyButton
+              className="ghost-button parallel-batch-copy-button"
+              icon="packet"
+              label="Copy batch packet"
+              text={batchPacket}
+              testId="copy-batch-packet"
+            />
+          </div>
         </div>
         <div className="parallel-batch-lanes">
           {batch.lanes.map((lane) => (
@@ -4124,6 +4134,88 @@ function buildWorkflowPacket(workflow: WorkflowItem, dashboard: DashboardData) {
   ]
     .filter((line) => line !== '')
     .join('\n');
+}
+
+function buildParallelBatchPacket({
+  batch,
+  dashboard,
+  plan,
+  workflows,
+}: {
+  batch: ParallelBatch;
+  dashboard: DashboardData;
+  plan: ParallelPlan;
+  workflows: Array<WorkflowItem>;
+}) {
+  const laneById = new Map(plan.lanes.map((lane) => [lane.id, lane]));
+  const workflowById = new Map(workflows.map((workflow) => [workflow.id, workflow]));
+  const activeLanes = batch.lanes
+    .map((lane) => laneById.get(lane.id))
+    .filter((lane): lane is ParallelLane => Boolean(lane));
+
+  return [
+    '# Ticketboard safe batch packet',
+    '',
+    `Generated: ${new Date().toISOString()}`,
+    `Repo: ${dashboard.repo.nameWithOwner} (${dashboard.repo.path})`,
+    `Plan source: ${plan.source}`,
+    `Capacity: ${moveCount(plan.recommendedActive, 'active lane')} planned; ${moveCount(plan.maxActive, 'lane')} max`,
+    `Batch: ${batch.title}`,
+    `Why: ${batch.detail}`,
+    '',
+    '## Run now',
+    ...(activeLanes.length
+      ? activeLanes.flatMap((lane, index) =>
+          parallelBatchLanePacket({
+            index,
+            lane,
+            workflow: lane.workflowId ? workflowById.get(lane.workflowId) ?? null : null,
+          }),
+        )
+      : ['- No runnable lane is selected right now.']),
+    '',
+    '## Decision trail',
+    ...batch.decisions.map(
+      (decision) =>
+        `- ${batchDecisionLabel(decision)}: ${decision.label} - ${decision.reason}`,
+    ),
+    '',
+    '## Guardrails',
+    '- Keep the focus lane as the only lane allowed to merge, ship, or redefine scope.',
+    '- Start only lanes marked Ready now unless fresh evidence changes the batch.',
+    '- Do not touch another active lane unless the linked ticket, PR, or failing check requires it.',
+    '- Stop each lane at its finish condition and leave a concrete validation/handoff note.',
+    '- Refresh Ticketboard after a lane starts, resumes, ships, blocks, or produces new PR/check evidence.',
+  ].join('\n');
+}
+
+function parallelBatchLanePacket({
+  index,
+  lane,
+  workflow,
+}: {
+  index: number;
+  lane: ParallelLane;
+  workflow: WorkflowItem | null;
+}) {
+  const handoff = workflow ? buildWorkflowHandoff(workflow) : null;
+  return [
+    `### ${index + 1}. ${batchLaneLabel(lane)}`,
+    `Role: ${laneRoleLabel(lane.role)}`,
+    `Action: ${lane.action}`,
+    `Why: ${lane.detail}`,
+    `Automation: ${lane.automation}`,
+    `Safety: ${lane.safety.label} - ${lane.safety.detail}`,
+    `Finish: ${workflow ? finishLineForWorkflow(workflow) : lane.status}`,
+    workflow ? `Workflow: ${workflow.title}` : '',
+    workflow ? `Next move: ${workflow.nextStep}` : '',
+    handoff ? `Then: ${handoff.next}` : '',
+    workflow?.linearTicket ? `Linear: ${workflow.linearTicket.url}` : '',
+    ...(workflow?.prs.map((pr) => `PR #${pr.number}: ${pr.url}`) ?? []),
+    lane.evidence.length ? 'Evidence:' : '',
+    ...lane.evidence.map((line) => `- ${line}`),
+    '',
+  ].filter((line) => line !== '');
 }
 
 function buildCodexPrompt(workflow: WorkflowItem) {
