@@ -253,7 +253,15 @@ type ParallelBatchLane = {
   workflowId: string | null;
 };
 
+type ParallelBatchDecisionStatus = 'focus' | 'guarded' | 'ready' | 'waiting';
+
+type ParallelBatchDecision = ParallelBatchLane & {
+  reason: string;
+  status: ParallelBatchDecisionStatus;
+};
+
 type ParallelBatch = {
+  decisions: Array<ParallelBatchDecision>;
   detail: string;
   guardedCount: number;
   lanes: Array<ParallelBatchLane>;
@@ -1726,6 +1734,35 @@ function ParallelLanesPanel({
             )
           ))}
         </div>
+        <div className="parallel-batch-decisions" aria-label="Safe batch decision trail">
+          {batch.decisions.slice(0, 6).map((decision) =>
+            decision.workflowId ? (
+              <button
+                className={`parallel-batch-decision parallel-batch-decision-${decision.status}`}
+                data-batch-decision={decision.id}
+                data-batch-decision-status={decision.status}
+                key={decision.id}
+                onClick={() => onSelect(decision.workflowId as string)}
+                type="button"
+              >
+                <small>{batchDecisionLabel(decision)}</small>
+                <strong>{decision.label}</strong>
+                <em>{decision.reason}</em>
+              </button>
+            ) : (
+              <span
+                className={`parallel-batch-decision parallel-batch-decision-${decision.status}`}
+                data-batch-decision={decision.id}
+                data-batch-decision-status={decision.status}
+                key={decision.id}
+              >
+                <small>{batchDecisionLabel(decision)}</small>
+                <strong>{decision.label}</strong>
+                <em>{decision.reason}</em>
+              </span>
+            ),
+          )}
+        </div>
       </div>
 
       <div className="parallel-lane-list">
@@ -2682,39 +2719,81 @@ function parallelBatchFor({
 }): ParallelBatch {
   const focusLane = lanes.find((lane) => lane.role === 'focus') ?? null;
   const extraSlots = Math.max(0, recommendedActive - laneLoad.activeCount);
+  const decisions: Array<ParallelBatchDecision> = [];
   const selected: Array<{
     lane: ParallelLane;
     paths: Array<string>;
   }> = [];
   let guardedCount = 0;
 
+  if (focusLane) {
+    decisions.push(batchDecision(focusLane, 'focus', 'Owns the current focus lane.'));
+  }
+
   for (const lane of lanes) {
-    if (lane.role !== 'parallel' && lane.role !== 'cleanup') continue;
+    if (lane.id === focusLane?.id) continue;
+    if (lane.role !== 'parallel' && lane.role !== 'cleanup') {
+      decisions.push(batchDecision(lane, 'waiting', lane.safety.detail));
+      continue;
+    }
     const workflow = lane.workflowId
       ? workflows.find((candidate) => candidate.id === lane.workflowId) ?? null
       : null;
     const laneAction = laneActionFor({ dashboard, lane, laneLoad, workflow });
-    if (
-      lane.safety.level !== 'safe' ||
-      !laneAction?.guard.runnable ||
-      !automatedActionKind(laneAction.action.request.kind)
-    ) {
+
+    if (lane.safety.level !== 'safe') {
       guardedCount += 1;
+      decisions.push(batchDecision(lane, 'guarded', lane.safety.detail));
+      continue;
+    }
+
+    if (!laneAction) {
+      guardedCount += 1;
+      decisions.push(batchDecision(lane, 'waiting', 'No local action is mapped for this lane.'));
+      continue;
+    }
+
+    if (!laneAction.guard.runnable) {
+      guardedCount += 1;
+      decisions.push(batchDecision(lane, 'guarded', laneAction.guard.reason));
+      continue;
+    }
+
+    if (!automatedActionKind(laneAction.action.request.kind)) {
+      guardedCount += 1;
+      decisions.push(batchDecision(lane, 'waiting', laneAction.guard.reason));
       continue;
     }
 
     const paths = changedPathsForLane(lane, workflow);
-    const conflictsWithSelected = selected.some((candidate) =>
+    const conflict = selected.find((candidate) =>
       intersectPaths(paths, candidate.paths).length > 0,
     );
-    if (conflictsWithSelected) {
+    if (conflict) {
       guardedCount += 1;
+      decisions.push(batchDecision(
+        lane,
+        'guarded',
+        batchConflictReason(lane, paths, conflict),
+      ));
       continue;
     }
 
     if (selected.length < extraSlots) {
       selected.push({ lane, paths });
+      decisions.push(batchDecision(
+        lane,
+        'ready',
+        'Fits the open Codex lane budget and has no changed-file conflict.',
+      ));
+      continue;
     }
+
+    decisions.push(batchDecision(
+      lane,
+      'waiting',
+      'Safe after the current batch; capacity is already assigned.',
+    ));
   }
 
   const batchLanes = [
@@ -2725,6 +2804,7 @@ function parallelBatchFor({
   const extraCount = selected.length;
 
   return {
+    decisions,
     detail: batchDetail({
       activeCount: laneLoad.activeCount,
       extraCount,
@@ -2755,6 +2835,41 @@ function changedPathsForLane(
 function batchLaneLabel(lane: ParallelLane) {
   const title = truncate(lane.title, 28);
   return lane.role === 'focus' ? `Focus: ${title}` : title;
+}
+
+function batchDecision(
+  lane: ParallelLane,
+  status: ParallelBatchDecisionStatus,
+  reason: string,
+): ParallelBatchDecision {
+  return {
+    id: lane.id,
+    label: batchLaneLabel(lane),
+    reason,
+    role: lane.role,
+    status,
+    workflowId: lane.workflowId,
+  };
+}
+
+function batchConflictReason(
+  lane: ParallelLane,
+  paths: Array<string>,
+  conflict: { lane: ParallelLane; paths: Array<string> },
+) {
+  const overlap = intersectPaths(paths, conflict.paths).slice(0, 2).join(', ');
+  const suffix = overlap ? `: ${overlap}` : '.';
+  return `${batchLaneLabel(lane)} overlaps ${batchLaneLabel(conflict.lane)}${suffix}`;
+}
+
+function batchDecisionLabel(decision: ParallelBatchDecision) {
+  const labels: Record<ParallelBatchDecisionStatus, string> = {
+    focus: 'Focus lane',
+    guarded: 'Guarded',
+    ready: 'Ready now',
+    waiting: 'Waiting',
+  };
+  return labels[decision.status];
 }
 
 function batchDetail({

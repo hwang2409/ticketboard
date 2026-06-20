@@ -31,7 +31,7 @@ async function launchBrowser() {
 }
 
 async function captureWorkflows() {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1280 } });
   await installMockRoutes(page);
   await page.goto(`${baseUrl}/`);
   await page.waitForLoadState('networkidle');

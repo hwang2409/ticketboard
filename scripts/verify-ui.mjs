@@ -148,6 +148,12 @@ async function verifyViewport({ width, height, screenshot }) {
         if ((await page.locator('[data-batch-lane]').count()) < 1) {
           throw new Error('Expected parallel lane panel to name the current safe batch');
         }
+        if ((await page.locator('[data-batch-decision]').count()) < 1) {
+          throw new Error('Expected parallel lane panel to explain batch decisions');
+        }
+        if ((await page.locator('[data-batch-decision-status="ready"], [data-batch-decision-status="guarded"]').count()) < 1) {
+          throw new Error('Expected batch decisions to expose ready or guarded candidates');
+        }
         if ((await page.locator('[data-parallel-lane]').count()) < 1) {
           throw new Error('Expected workflow brief lanes to render in the parallel lane panel');
         }

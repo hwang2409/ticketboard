@@ -1524,6 +1524,78 @@ button.parallel-batch-lane:focus-visible {
   border-color: var(--foreground);
 }
 
+.parallel-batch-decisions {
+  display: grid;
+  min-width: 0;
+  grid-column: 1 / -1;
+  gap: 0.35rem;
+}
+
+.parallel-batch-decision {
+  display: grid;
+  grid-template-columns: 5.8rem minmax(0, 11rem) minmax(0, 1fr);
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.42rem 0.5rem;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--line);
+  background: var(--surface-muted);
+  color: var(--foreground);
+  text-align: left;
+}
+
+button.parallel-batch-decision {
+  cursor: pointer;
+}
+
+button.parallel-batch-decision:hover,
+button.parallel-batch-decision:focus-visible {
+  border-color: var(--foreground);
+}
+
+.parallel-batch-decision small {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.parallel-batch-decision strong,
+.parallel-batch-decision em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parallel-batch-decision strong {
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.parallel-batch-decision em {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-style: normal;
+}
+
+.parallel-batch-decision-focus {
+  border-left-color: var(--foreground);
+}
+
+.parallel-batch-decision-ready {
+  border-left-color: var(--green);
+}
+
+.parallel-batch-decision-guarded {
+  border-left-color: var(--warning);
+}
+
+.parallel-batch-decision-waiting {
+  border-left-color: var(--border-strong);
+}
+
 .parallel-lane-list {
   display: grid;
   gap: 0.45rem;
@@ -2405,6 +2477,16 @@ button.plan-item {
   .parallel-batch-lanes {
     max-width: none;
     justify-content: flex-start;
+  }
+
+  .parallel-batch-decision {
+    grid-template-columns: 1fr;
+    gap: 0.18rem;
+  }
+
+  .parallel-batch-decision strong,
+  .parallel-batch-decision em {
+    white-space: normal;
   }
 
   .parallel-lane-meta {
