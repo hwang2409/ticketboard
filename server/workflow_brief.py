@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shlex
 from datetime import UTC, datetime
 from glob import glob
 from pathlib import Path
@@ -299,6 +300,7 @@ def build_workflow_evidence_snapshot(
             dashboard,
         ),
         "diagnostics": dashboard.get("diagnostics", []),
+        "verification": build_source_verification(dashboard),
         "planDoc": plan_doc,
         "planDocs": plan_docs,
         "planningSignals": summarize_plan_docs(plan_docs),
@@ -316,6 +318,143 @@ def build_workflow_evidence_snapshot(
         },
     }
     return snapshot
+
+
+def build_source_verification(dashboard: dict[str, Any]) -> dict[str, Any]:
+    repo = dashboard.get("repo") if isinstance(dashboard.get("repo"), dict) else {}
+    repo_path = str(repo.get("path") or "").strip()
+    repo_name = str(repo.get("nameWithOwner") or "").strip()
+    pr_numbers = dashboard_pr_numbers(dashboard)[:6]
+    ticket_ids = dashboard_ticket_ids(dashboard)[:20]
+    tmux_windows = [
+        window
+        for window in dashboard.get("tmuxWindows", [])
+        if isinstance(window, dict)
+    ]
+    tmux_sessions = sorted(
+        {
+            str(window.get("session") or "").strip()
+            for window in tmux_windows
+            if str(window.get("session") or "").strip()
+        },
+    )[:4]
+    tmux_panes = [
+        str(window.get("paneId") or "").strip()
+        for window in tmux_windows
+        if str(window.get("paneId") or "").strip()
+    ][:8]
+
+    commands: dict[str, list[str]] = {
+        "git": [],
+        "github": [],
+        "tmux": [],
+    }
+    if repo_path:
+        commands["git"].extend(
+            [
+                shell_join(["git", "-C", repo_path, "status", "--short", "--branch"]),
+                shell_join(["git", "-C", repo_path, "worktree", "list", "--porcelain"]),
+            ],
+        )
+    for pr_number in pr_numbers:
+        base = ["gh", "pr", "view", str(pr_number)]
+        if repo_name:
+            base.extend(["--repo", repo_name])
+        commands["github"].append(
+            shell_join(
+                [
+                    *base,
+                    "--json",
+                    "number,title,state,isDraft,reviewDecision,mergeStateStatus,statusCheckRollup,files,updatedAt",
+                ],
+            ),
+        )
+        check_command = ["gh", "pr", "checks", str(pr_number)]
+        if repo_name:
+            check_command.extend(["--repo", repo_name])
+        commands["github"].append(shell_join(check_command))
+    for session in tmux_sessions:
+        commands["tmux"].append(
+            shell_join(
+                [
+                    "tmux",
+                    "list-windows",
+                    "-t",
+                    session,
+                    "-F",
+                    "#{window_index}\\t#{window_name}\\t#{window_active}\\t#{pane_current_path}\\t#{pane_current_command}\\t#{pane_id}",
+                ],
+            ),
+        )
+    for pane_id in tmux_panes:
+        commands["tmux"].append(
+            shell_join(["tmux", "capture-pane", "-p", "-S", "-80", "-t", pane_id]),
+        )
+
+    return {
+        "purpose": (
+            "Read-only source checks for Codex when snapshot data is missing, stale, "
+            "contradictory, or a lane is about to be marked safe or ship-ready."
+        ),
+        "mcpHints": [
+            (
+                "If GitHub MCP tools are available, use them read-only to verify "
+                "listed PR checks, review state, files, and merge readiness before "
+                "choosing focus or ship lanes."
+            ),
+            (
+                "If Linear MCP tools are available, use them read-only to verify "
+                "listed ticket states, project membership, blockers, comments, and "
+                "priority before overriding planning docs."
+            ),
+            "Fallback to the git, gh, and tmux commands below when MCP tools are unavailable.",
+        ],
+        "targets": {
+            "githubRepo": repo_name or None,
+            "linearTicketIds": ticket_ids,
+            "pullRequests": pr_numbers,
+            "repoPath": repo_path or None,
+            "tmuxSessions": tmux_sessions,
+        },
+        "commands": commands,
+    }
+
+
+def dashboard_pr_numbers(dashboard: dict[str, Any]) -> list[int]:
+    numbers: list[int] = []
+    for pr in dashboard.get("prs", []):
+        if isinstance(pr, dict) and isinstance(pr.get("number"), int):
+            numbers.append(pr["number"])
+    return sorted(set(numbers))
+
+
+def dashboard_ticket_ids(dashboard: dict[str, Any]) -> list[str]:
+    ticket_ids: set[str] = set()
+    for collection_name in (
+        "tickets",
+        "linearTickets",
+        "prs",
+        "codexSessions",
+        "tmuxWindows",
+        "worktrees",
+    ):
+        for item in dashboard.get(collection_name, []):
+            if not isinstance(item, dict):
+                continue
+            ticket_id = str(item.get("ticketId") or "").strip().upper()
+            if ticket_id:
+                ticket_ids.add(ticket_id)
+            nested_ticket_ids = item.get("ticketIds", [])
+            if isinstance(nested_ticket_ids, list):
+                for nested in nested_ticket_ids:
+                    nested_id = str(nested or "").strip().upper()
+                    if nested_id:
+                        ticket_ids.add(nested_id)
+    return sorted(ticket_ids)
+
+
+def shell_join(parts: list[Any]) -> str:
+    return " ".join(shlex.quote(str(part)) for part in parts if str(part))
 
 
 def summarize_recent_handoffs(

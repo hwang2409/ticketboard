@@ -2,6 +2,8 @@ import { chromium } from 'playwright';
 
 const url = process.env.TICKETBOARD_URL ?? 'http://localhost:4317';
 const baseUrl = url.replace(/\/$/, '');
+const API_TIMEOUT_MS = 60_000;
+const SCREENSHOT_TIMEOUT_MS = 60_000;
 const browser = await launchBrowser();
 const errors = [];
 
@@ -64,7 +66,7 @@ async function verifyViewport({ width, height, screenshot }) {
 
   const dashboardResponse = await page.request.get(
     `${baseUrl}/api/dashboard?refresh=1&verify=${width}x${height}-${Date.now()}`,
-    { headers: { 'cache-control': 'no-cache' } },
+    { headers: { 'cache-control': 'no-cache' }, timeout: API_TIMEOUT_MS },
   );
   if (!dashboardResponse.ok()) {
     throw new Error(`Expected dashboard API to load, got ${dashboardResponse.status()}`);
@@ -73,7 +75,7 @@ async function verifyViewport({ width, height, screenshot }) {
   validateDashboardShape(dashboard);
   const briefResponse = await page.request.get(
     `${baseUrl}/api/workflow-brief?verify=${width}x${height}-${Date.now()}`,
-    { headers: { 'cache-control': 'no-cache' } },
+    { headers: { 'cache-control': 'no-cache' }, timeout: API_TIMEOUT_MS },
   );
   if (!briefResponse.ok()) {
     throw new Error(`Expected workflow brief API to load, got ${briefResponse.status()}`);
@@ -82,7 +84,7 @@ async function verifyViewport({ width, height, screenshot }) {
   validateWorkflowBriefShape(workflowBrief);
   const evidenceResponse = await page.request.get(
     `${baseUrl}/api/workflow-brief/evidence-snapshot?refresh=1&verify=${width}x${height}-${Date.now()}`,
-    { headers: { 'cache-control': 'no-cache' } },
+    { headers: { 'cache-control': 'no-cache' }, timeout: API_TIMEOUT_MS },
   );
   if (!evidenceResponse.ok()) {
     throw new Error(`Expected workflow evidence API to load, got ${evidenceResponse.status()}`);
@@ -91,8 +93,10 @@ async function verifyViewport({ width, height, screenshot }) {
   await verifyUserStateApi(page);
   await mockUserStateRoutes(page);
 
-  await page.goto(`${baseUrl}/?verify=${width}x${height}-${Date.now()}`);
-  await page.waitForLoadState('networkidle');
+  await page.goto(`${baseUrl}/?verify=${width}x${height}-${Date.now()}`, {
+    timeout: API_TIMEOUT_MS,
+    waitUntil: 'domcontentloaded',
+  });
   await page.waitForSelector('[data-app-ready="true"]', { timeout: 20_000 });
   await page.waitForSelector('[data-testid="command-strip"]', { timeout: 10_000 });
 
@@ -294,7 +298,7 @@ async function verifyViewport({ width, height, screenshot }) {
     await page.waitForSelector('.empty-workspace', { timeout: 10_000 });
   }
 
-  await page.screenshot({ fullPage: true, path: screenshot });
+  await page.screenshot({ fullPage: true, path: screenshot, timeout: SCREENSHOT_TIMEOUT_MS });
   try {
     await verifyMockedActionAdvance(page, workflowBrief.status === 'ready');
   } finally {
@@ -426,7 +430,10 @@ async function verifyMockedActionAdvance(page, briefPinsSelection) {
 
 async function verifyUserStateApi(page) {
   const id = `verify-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const response = await page.request.get(`${baseUrl}/api/user-state?verify=${Date.now()}`);
+  const response = await page.request.get(
+    `${baseUrl}/api/user-state?verify=${Date.now()}`,
+    { timeout: API_TIMEOUT_MS },
+  );
   if (!response.ok()) {
     throw new Error(`Expected user-state API to load, got ${response.status()}`);
   }
@@ -436,6 +443,7 @@ async function verifyUserStateApi(page) {
     const dismissResponse = await page.request.post(`${baseUrl}/api/user-state/dismiss`, {
       data: { id, kind: 'snooze' },
       headers: { 'content-type': 'application/json' },
+      timeout: API_TIMEOUT_MS,
     });
     if (!dismissResponse.ok()) {
       throw new Error(`Expected user-state dismiss to pass, got ${dismissResponse.status()}`);
@@ -448,6 +456,7 @@ async function verifyUserStateApi(page) {
   } finally {
     await page.request.delete(
       `${baseUrl}/api/user-state/dismiss/${encodeURIComponent(id)}`,
+      { timeout: API_TIMEOUT_MS },
     );
   }
 }
@@ -746,6 +755,7 @@ function validateWorkflowEvidenceShape(response) {
   const planDocs = response?.snapshot?.planDocs;
   const planningSignals = response?.snapshot?.planningSignals;
   const prs = response?.snapshot?.prs;
+  const verification = response?.snapshot?.verification;
   if (
     !response ||
     typeof response !== 'object' ||
@@ -758,9 +768,19 @@ function validateWorkflowEvidenceShape(response) {
     !Array.isArray(planningSignals.sections) ||
     !Array.isArray(planningSignals.ticketIds) ||
     !Array.isArray(recentHandoffs) ||
-    !Array.isArray(prs)
+    !Array.isArray(prs) ||
+    !verification ||
+    typeof verification !== 'object' ||
+    !Array.isArray(verification.mcpHints) ||
+    !verification.commands ||
+    typeof verification.commands !== 'object'
   ) {
-    throw new Error('Expected workflow evidence snapshot to include plan docs, recent handoffs, and PRs');
+    throw new Error('Expected workflow evidence snapshot to include plan docs, recent handoffs, PRs, and verification hints');
+  }
+  for (const key of ['git', 'github', 'tmux']) {
+    if (!Array.isArray(verification.commands[key])) {
+      throw new Error(`Expected workflow evidence verification commands.${key} to be an array`);
+    }
   }
   for (const [index, doc] of planDocs.entries()) {
     if (!doc || typeof doc !== 'object' || typeof doc.path !== 'string') {
@@ -795,6 +815,7 @@ async function verifyDryRunAction(page, dashboard) {
       workflowId: 'verify:dry-run',
     },
     headers: { 'content-type': 'application/json' },
+    timeout: API_TIMEOUT_MS,
   });
   if (!response.ok()) {
     throw new Error(`Expected dry-run workflow action to pass, got ${response.status()}`);
@@ -816,18 +837,20 @@ async function verifyTokensPage({ width, height, screenshot }) {
 
   const tokensResponse = await page.request.get(
     `${baseUrl}/api/tokens?verify=${Date.now()}`,
-    { headers: { 'cache-control': 'no-cache' } },
+    { headers: { 'cache-control': 'no-cache' }, timeout: API_TIMEOUT_MS },
   );
   if (!tokensResponse.ok()) {
     throw new Error(`Expected token API to load, got ${tokensResponse.status()}`);
   }
   validateTokenShape(await tokensResponse.json());
 
-  await page.goto(`${baseUrl}/tokens?verify=${Date.now()}`);
-  await page.waitForLoadState('networkidle');
+  await page.goto(`${baseUrl}/tokens?verify=${Date.now()}`, {
+    timeout: API_TIMEOUT_MS,
+    waitUntil: 'domcontentloaded',
+  });
   await page.waitForSelector('[data-tokens-ready="true"]', { timeout: 20_000 });
   await page.waitForSelector('text=Spend, sessions, drift.', { timeout: 10_000 });
-  await page.screenshot({ fullPage: true, path: screenshot });
+  await page.screenshot({ fullPage: true, path: screenshot, timeout: SCREENSHOT_TIMEOUT_MS });
   await page.close();
 }
 

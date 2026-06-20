@@ -26,6 +26,7 @@ It is designed to answer one question quickly: **what should own focus, what can
 - Offers a next-safe-lane action when one parallel Codex handoff is ready.
 - Tracks recent handoff outcomes so launched or resumed lanes show live, quiet, or cleared state in both the UI and Codex evidence.
 - Checks for evidence drift while a brief is still fresh, so PR merges, check changes, handoffs, or planning-doc edits can trigger a new Codex plan before the 10-minute cadence expires.
+- Gives Codex read-only GitHub, Linear, git, and tmux verification hints so missing API keys do not block source-of-truth checks.
 - Shows brief freshness, watcher cadence, lock state, and last evidence fingerprint.
 - Explains the selected move with evidence, latest signal, terminal context, and finish criteria.
 - Can focus an existing tmux lane, create a worktree, resume Codex, open a PR, or launch a new Codex lane.
@@ -39,8 +40,8 @@ Ticketboard keeps the browser thin. The backend gathers state, validates actions
 
 1. Local collectors read tmux windows, Codex sessions, git worktrees, GitHub PRs, Linear tickets, and cached state.
 2. A deterministic scorer builds a fallback workflow queue, so the app still works without any generated brief.
-3. The optional Codex automation exports an evidence snapshot from `/api/workflow-brief/evidence-snapshot`, including recent handoffs.
-4. Local Codex runs in permission-bypass mode, reads that snapshot, reasons over focus plus safe parallel lanes, and writes a structured JSON brief.
+3. The optional Codex automation exports an evidence snapshot from `/api/workflow-brief/evidence-snapshot`, including recent handoffs and read-only source verification hints.
+4. Local Codex runs in permission-bypass mode, reads that snapshot, verifies stale or missing source data through available MCP/CLI access, reasons over focus plus safe parallel lanes, and writes a structured JSON brief.
 5. The UI renders the Codex brief when it is fresh; otherwise it falls back to deterministic focus/parallel/cleanup lanes.
 
 The app does not call LLM APIs or store model keys. GitHub and Linear enrichment can come from your local CLI/MCP setup; API keys are only needed if you want the backend collectors to call those services directly.

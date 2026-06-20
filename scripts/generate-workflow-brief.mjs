@@ -168,6 +168,12 @@ Before deciding, verify the live tmux state directly:
 - tmux list-windows -t phoebe -F '#{window_index}\\t#{window_name}\\t#{window_active}\\t#{pane_current_path}\\t#{pane_current_command}\\t#{pane_id}'
 - tmux capture-pane -p -S -80 -t phoebe:<index> for panes that look relevant
 
+Also inspect snapshot.verification. When PR, Linear, worktree, or planning evidence is missing, stale, contradictory, or about to decide focus/parallel safety/ship readiness:
+- Prefer available GitHub and Linear MCP tools for read-only verification of the listed pull requests and tickets.
+- Fall back to the read-only git, gh, and tmux commands in snapshot.verification.commands when MCP tools are unavailable.
+- Do not require GitHub or Linear API keys inside Ticketboard; use the local Codex environment's MCP/CLI access when it exists.
+- Never run mutating source commands, never merge, never update Linear, and never change files except the workflow brief JSON below.
+
 Do not edit source files. Only write the workflow brief JSON file below:
 ${briefPath}
 
