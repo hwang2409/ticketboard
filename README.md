@@ -15,7 +15,7 @@ It is designed to answer one question quickly: **what should own focus, what can
 - Shows current Codex, terminal, and dirty worktree lane load against the planned capacity.
 - Builds a lane plan for focus work, parallel Codex candidates, waiting checkpoints, and cleanup.
 - Names the current safe batch of lanes that can run together without changed-file conflicts.
-- Guards Codex lane actions when focus safety is unknown or files overlap.
+- Guards Codex lane actions when focus safety is unknown, files overlap, or lane capacity is full.
 - Offers a next-safe-lane action when one parallel Codex handoff is ready.
 - Shows brief freshness, watcher cadence, lock state, and last evidence fingerprint.
 - Explains the selected move with evidence, latest signal, terminal context, and finish criteria.

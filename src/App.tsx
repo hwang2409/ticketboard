@@ -103,6 +103,7 @@ type PlannedWorkflowAction = {
 };
 
 type LaneActionGuard = {
+  kind: 'capacity' | 'checkpoint' | 'safety';
   label: string;
   reason: string;
   runnable: boolean;
@@ -1287,6 +1288,8 @@ function ProjectPlanRail({
   visibleWorkflows: Array<WorkflowItem>;
   workflows: Array<WorkflowItem>;
 }) {
+  const laneLoad = buildLaneLoad({ parallelPlan, workflows });
+
   return (
     <aside className="workflow-queue plan-rail" aria-label="Generated project plan" data-project-plan>
       <div className="queue-head">
@@ -1309,9 +1312,8 @@ function ProjectPlanRail({
       />
 
       <LaneLoadPanel
+        load={laneLoad}
         onSelect={onSelect}
-        parallelPlan={parallelPlan}
-        workflows={workflows}
       />
 
       <HandoffLedger handoffs={handoffs} onSelect={onSelect} />
@@ -1325,6 +1327,7 @@ function ProjectPlanRail({
       {parallelPlan ? (
         <ParallelLanesPanel
           dashboard={dashboard}
+          laneLoad={laneLoad}
           onActionComplete={onWorkflowActionComplete}
           onSelect={onSelect}
           plan={parallelPlan}
@@ -1474,16 +1477,12 @@ function PlanDigestItem({
 }
 
 function LaneLoadPanel({
+  load,
   onSelect,
-  parallelPlan,
-  workflows,
 }: {
+  load: LaneLoad;
   onSelect: (id: string) => void;
-  parallelPlan: ParallelPlan | null;
-  workflows: Array<WorkflowItem>;
 }) {
-  const load = buildLaneLoad({ parallelPlan, workflows });
-
   return (
     <section className="lane-load" data-lane-load>
       <div className="lane-load-head">
@@ -1628,6 +1627,7 @@ function UnlockMapPanel({
 
 function ParallelLanesPanel({
   dashboard,
+  laneLoad,
   onActionComplete,
   onSelect,
   plan,
@@ -1635,6 +1635,7 @@ function ParallelLanesPanel({
   workflows,
 }: {
   dashboard: DashboardData;
+  laneLoad: LaneLoad;
   onActionComplete: (workflow: WorkflowItem, shouldAdvance: boolean) => void;
   onSelect: (id: string) => void;
   plan: ParallelPlan;
@@ -1644,11 +1645,13 @@ function ParallelLanesPanel({
   if (!plan.lanes.length) return null;
   const nextLaneAction = nextSafeLaneAction({
     dashboard,
+    laneLoad,
     lanes: plan.lanes,
     workflows,
   });
   const batch = parallelBatchFor({
     dashboard,
+    laneLoad,
     lanes: plan.lanes,
     recommendedActive: plan.recommendedActive,
     workflows,
@@ -1730,6 +1733,7 @@ function ParallelLanesPanel({
           <ParallelLaneRow
             dashboard={dashboard}
             key={lane.id}
+            laneLoad={laneLoad}
             lane={lane}
             onActionComplete={onActionComplete}
             onSelect={onSelect}
@@ -1745,6 +1749,7 @@ function ParallelLanesPanel({
 function ParallelLaneRow({
   dashboard,
   lane,
+  laneLoad,
   onActionComplete,
   onSelect,
   selectedWorkflowId,
@@ -1752,6 +1757,7 @@ function ParallelLaneRow({
 }: {
   dashboard: DashboardData;
   lane: ParallelLane;
+  laneLoad: LaneLoad;
   onActionComplete: (workflow: WorkflowItem, shouldAdvance: boolean) => void;
   onSelect: (id: string) => void;
   selectedWorkflowId: string;
@@ -1760,7 +1766,7 @@ function ParallelLaneRow({
   const workflow = lane.workflowId
     ? workflows.find((candidate) => candidate.id === lane.workflowId) ?? null
     : null;
-  const laneAction = laneActionFor({ dashboard, lane, workflow });
+  const laneAction = laneActionFor({ dashboard, lane, laneLoad, workflow });
   const content = (
     <>
       <span className={`parallel-role parallel-role-${lane.role}`}>
@@ -1811,7 +1817,7 @@ function ParallelLaneRow({
           ) : laneAction ? (
             <button
               className="ghost-button lane-action-button lane-action-guard"
-              data-lane-action-guard={lane.safety.level}
+              data-lane-action-guard={laneAction.guard.kind}
               onClick={() => onSelect(lane.workflowId as string)}
               title={laneAction.guard.reason}
               type="button"
@@ -2610,10 +2616,12 @@ function laneRoleLabel(role: ParallelLaneRole) {
 function laneActionFor({
   dashboard,
   lane,
+  laneLoad,
   workflow,
 }: {
   dashboard: DashboardData;
   lane: ParallelLane;
+  laneLoad: LaneLoad;
   workflow: WorkflowItem | null;
 }): RunnableLaneAction | null {
   if (!workflow) return null;
@@ -2625,7 +2633,7 @@ function laneActionFor({
   if (!action) return null;
   return {
     action,
-    guard: laneActionGuard(lane, action),
+    guard: laneActionGuard(lane, action, workflow, laneLoad),
     lane,
     workflow,
   };
@@ -2633,10 +2641,12 @@ function laneActionFor({
 
 function nextSafeLaneAction({
   dashboard,
+  laneLoad,
   lanes,
   workflows,
 }: {
   dashboard: DashboardData;
+  laneLoad: LaneLoad;
   lanes: Array<ParallelLane>;
   workflows: Array<WorkflowItem>;
 }): RunnableLaneAction | null {
@@ -2646,7 +2656,7 @@ function nextSafeLaneAction({
     const workflow = lane.workflowId
       ? workflows.find((candidate) => candidate.id === lane.workflowId) ?? null
       : null;
-    const laneAction = laneActionFor({ dashboard, lane, workflow });
+    const laneAction = laneActionFor({ dashboard, lane, laneLoad, workflow });
     if (
       laneAction?.guard.runnable &&
       automatedActionKind(laneAction.action.request.kind)
@@ -2659,17 +2669,19 @@ function nextSafeLaneAction({
 
 function parallelBatchFor({
   dashboard,
+  laneLoad,
   lanes,
   recommendedActive,
   workflows,
 }: {
   dashboard: DashboardData;
+  laneLoad: LaneLoad;
   lanes: Array<ParallelLane>;
   recommendedActive: number;
   workflows: Array<WorkflowItem>;
 }): ParallelBatch {
   const focusLane = lanes.find((lane) => lane.role === 'focus') ?? null;
-  const extraSlots = Math.max(0, recommendedActive - (focusLane ? 1 : 0));
+  const extraSlots = Math.max(0, recommendedActive - laneLoad.activeCount);
   const selected: Array<{
     lane: ParallelLane;
     paths: Array<string>;
@@ -2681,7 +2693,7 @@ function parallelBatchFor({
     const workflow = lane.workflowId
       ? workflows.find((candidate) => candidate.id === lane.workflowId) ?? null
       : null;
-    const laneAction = laneActionFor({ dashboard, lane, workflow });
+    const laneAction = laneActionFor({ dashboard, lane, laneLoad, workflow });
     if (
       lane.safety.level !== 'safe' ||
       !laneAction?.guard.runnable ||
@@ -2713,7 +2725,12 @@ function parallelBatchFor({
   const extraCount = selected.length;
 
   return {
-    detail: batchDetail({ extraCount, guardedCount, recommendedActive }),
+    detail: batchDetail({
+      activeCount: laneLoad.activeCount,
+      extraCount,
+      guardedCount,
+      recommendedActive,
+    }),
     guardedCount,
     lanes: batchLanes.map((lane) => ({
       id: lane.id,
@@ -2741,49 +2758,106 @@ function batchLaneLabel(lane: ParallelLane) {
 }
 
 function batchDetail({
+  activeCount,
   extraCount,
   guardedCount,
   recommendedActive,
 }: {
+  activeCount: number;
   extraCount: number;
   guardedCount: number;
   recommendedActive: number;
 }) {
+  const budget = `Budget is ${moveCount(recommendedActive, 'active lane')}`;
   if (extraCount > 0) {
     const guarded = guardedCount
       ? ` ${moveCount(guardedCount, 'lane')} stay guarded.`
       : ' No guarded runnable lanes remain.';
-    return `${moveCount(recommendedActive, 'active lane')} budget; ${moveCount(extraCount, 'extra Codex lane')} can run beside focus.${guarded}`;
+    return `${budget}; ${moveCount(extraCount, 'extra Codex lane')} can run beside focus.${guarded}`;
   }
   if (guardedCount > 0) {
-    return `${moveCount(recommendedActive, 'active lane')} budget, but every extra lane needs review before it runs beside focus.`;
+    if (activeCount >= recommendedActive) {
+      return `${budget} and it is full; finish or clean a lane before starting another.`;
+    }
+    return `${budget}, but every extra lane needs review before it runs beside focus.`;
   }
-  return `${moveCount(recommendedActive, 'active lane')} budget; no extra Codex lane is queued yet.`;
+  return `${budget}; no extra Codex lane is queued yet.`;
 }
 
 function automatedActionKind(kind: WorkflowActionRequest['kind']) {
   return kind === 'launch-codex' || kind === 'resume-codex' || kind === 'start-lane';
 }
 
-function laneActionGuard(lane: ParallelLane, action: PlannedWorkflowAction) {
+function laneActionGuard(
+  lane: ParallelLane,
+  action: PlannedWorkflowAction,
+  workflow: WorkflowItem,
+  laneLoad: LaneLoad,
+): LaneActionGuard {
   if (!automatedActionKind(action.request.kind)) {
-    return { label: action.label, reason: 'Human checkpoint action.', runnable: true };
+    return {
+      kind: 'checkpoint',
+      label: action.label,
+      reason: 'Human checkpoint action.',
+      runnable: true,
+    };
   }
-  if (lane.role === 'focus' || lane.safety.level === 'focus' || lane.safety.level === 'safe') {
-    return { label: action.label, reason: lane.safety.detail, runnable: true };
+  if (
+    lane.role === 'focus' ||
+    lane.safety.level === 'focus' ||
+    workflowHasLiveLane(workflow)
+  ) {
+    return {
+      kind: 'safety',
+      label: action.label,
+      reason: lane.safety.detail,
+      runnable: true,
+    };
   }
   if (lane.safety.level === 'blocked') {
     return {
+      kind: 'safety',
       label: 'Review first',
       reason: `Guarded because ${lane.safety.detail}`,
       runnable: false,
     };
   }
+  if (lane.safety.level !== 'safe') {
+    return {
+      kind: 'safety',
+      label: 'Check first',
+      reason: `Guarded because ${lane.safety.detail}`,
+      runnable: false,
+    };
+  }
+  const capacityGuard = capacityGuardForNewLane(laneLoad);
+  if (capacityGuard) return capacityGuard;
   return {
-    label: 'Check first',
-    reason: `Guarded because ${lane.safety.detail}`,
-    runnable: false,
+    kind: 'safety',
+    label: action.label,
+    reason: lane.safety.detail,
+    runnable: true,
   };
+}
+
+function capacityGuardForNewLane(laneLoad: LaneLoad): LaneActionGuard | null {
+  if (laneLoad.activeCount >= laneLoad.maxActive) {
+    return {
+      kind: 'capacity',
+      label: 'At max',
+      reason: `Guarded because the current load is ${moveCount(laneLoad.activeCount, 'active lane')} and the hard limit is ${moveCount(laneLoad.maxActive, 'lane')}. Finish or clean a lane before starting another Codex handoff.`,
+      runnable: false,
+    };
+  }
+  if (laneLoad.activeCount >= laneLoad.recommendedActive) {
+    return {
+      kind: 'capacity',
+      label: 'At capacity',
+      reason: `Guarded because the current load is ${moveCount(laneLoad.activeCount, 'active lane')} and the plan is ${moveCount(laneLoad.recommendedActive, 'lane')}. Finish or clean a lane before starting another Codex handoff.`,
+      runnable: false,
+    };
+  }
+  return null;
 }
 
 function handoffKindLabel(kind: string) {
