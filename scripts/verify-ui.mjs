@@ -189,6 +189,12 @@ async function verifyViewport({ width, height, screenshot }) {
         if ((await page.locator('[data-batch-decision-status="ready"], [data-batch-decision-status="guarded"]').count()) < 1) {
           throw new Error('Expected batch decisions to expose ready or guarded candidates');
         }
+        if (
+          (await page.locator('[data-batch-decision-status="ready"]').count()) > 0 &&
+          (await page.locator('[data-testid="run-safe-batch"]').count()) < 1
+        ) {
+          throw new Error('Expected ready batch decisions to expose a safe-batch runner');
+        }
         await verifyCopyAction({
           button: page.locator('[data-testid="copy-batch-packet"]').first(),
           expected: [

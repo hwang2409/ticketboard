@@ -36,8 +36,29 @@ async function captureWorkflows() {
   await page.goto(`${baseUrl}/`);
   await page.waitForLoadState('networkidle');
   await page.waitForSelector('[data-testid="workflow-brief"]', { timeout: 20_000 });
+  await page.waitForSelector('[data-testid="run-safe-batch"]', { timeout: 20_000 });
+  const scrollState = await page.locator('[data-testid="run-safe-batch"]').evaluate((node) => {
+    const scroller = node.closest('.workflow-queue');
+    if (!scroller || typeof scroller.getBoundingClientRect !== 'function') {
+      return { after: 0, before: 0, max: 0, target: 0 };
+    }
+    const before = scroller.scrollTop;
+    const max = scroller.scrollHeight - scroller.clientHeight;
+    node.scrollIntoView({ block: 'center', inline: 'nearest' });
+    node.ownerDocument.defaultView?.scrollTo(0, 0);
+    return {
+      after: scroller.scrollTop,
+      before,
+      max,
+      target: scroller.scrollTop,
+    };
+  });
+  if (scrollState.max > 0 && scrollState.after === scrollState.before) {
+    throw new Error(`Workflow screenshot did not scroll to safe batch: ${JSON.stringify(scrollState)}`);
+  }
+  await page.waitForTimeout(150);
   await page.screenshot({
-    fullPage: true,
+    fullPage: false,
     path: new URL('ticketboard-workflows.png', outputDir).pathname,
   });
   await page.close();
@@ -159,20 +180,8 @@ function mockDashboard() {
       }),
       mockLinearTicket({
         description: 'Replace the stale onboarding API in the next product slice.',
-        relatedIssues: [
-          {
-            issue: {
-              stateName: 'In Progress',
-              stateType: 'started',
-              ticketId: 'APP-214',
-              title: 'Fix checkout retry loop after payment timeout',
-              url: 'https://linear.app/acme/issue/APP-214',
-            },
-            relationType: 'blocked_by',
-          },
-        ],
-        stateName: 'Backlog',
-        stateType: 'unstarted',
+        stateName: 'In Progress',
+        stateType: 'started',
         ticketId: 'APP-219',
         title: 'Port onboarding API to the new capability gate',
       }),
@@ -186,6 +195,19 @@ function mockDashboard() {
         reviewDecision: null,
         ticketIds: ['APP-214'],
         title: 'APP-214 Fix checkout retry loop',
+      }),
+      mockPullRequest({
+        checkState: 'red',
+        failed: 1,
+        files: [
+          { path: 'src/capabilities/gate.ts' },
+          { path: 'tests/capabilities/gate.test.ts' },
+        ],
+        number: 131,
+        pending: 0,
+        reviewDecision: null,
+        ticketIds: ['APP-219'],
+        title: 'APP-219 Port onboarding API to capability gate',
       }),
     ],
     repo: {
@@ -211,10 +233,10 @@ function mockDashboard() {
       },
       {
         branches: ['feature/app-219-capability-gate'],
-        nextAction: 'No immediate action',
-        prNumbers: [],
-        risk: 'low',
-        state: 'quiet',
+        nextAction: 'Fix the capability-gate test failure',
+        prNumbers: [131],
+        risk: 'medium',
+        state: 'blocked',
         ticketId: 'APP-219',
         title: 'Port onboarding API to the new capability gate',
         windows: [],
@@ -303,15 +325,18 @@ function mockWorkflowBrief() {
           workflowId: 'ticket:APP-214',
         },
         {
-          action: 'Create the first implementation lane.',
-          automation: 'Start Codex lane',
+          action: 'Fix the capability-gate check in a separate lane.',
+          automation: 'Codex fix lane',
           confidence: 'medium',
-          evidence: ['APP-219 has no live lane yet.'],
-          handoffWhen: 'A branch exists with a first change or blocker.',
+          evidence: [
+            'PR #131 touches src/capabilities/gate.ts and tests/capabilities/gate.test.ts.',
+            'APP-214 only has payment retry changes.',
+          ],
+          handoffWhen: 'The capability-gate check is green or a blocker is captured.',
           laneId: 'parallel:APP-219',
           parallelSafe: true,
           role: 'parallel',
-          status: 'Ready to start',
+          status: 'Ready to run beside checkout',
           ticketId: 'APP-219',
           title: 'Capability gate',
           why: 'It can proceed independently after the checkout lane is stable.',
@@ -476,7 +501,16 @@ function mockLinearTicket({
   };
 }
 
-function mockPullRequest({ checkState, failed, number, pending, reviewDecision, ticketIds, title }) {
+function mockPullRequest({
+  checkState,
+  failed,
+  files = [],
+  number,
+  pending,
+  reviewDecision,
+  ticketIds,
+  title,
+}) {
   const now = new Date().toISOString();
   return {
     additions: 148,
@@ -496,7 +530,7 @@ function mockPullRequest({ checkState, failed, number, pending, reviewDecision, 
     commits: [],
     deletions: 32,
     detailLevel: 'summary',
-    files: [],
+    files,
     headRefName: `feature/${ticketIds[0].toLowerCase()}-${slug(title)}`,
     isDraft: false,
     labels: [],

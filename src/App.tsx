@@ -101,6 +101,11 @@ type ActionButtonState =
   | { message: string; status: 'idle'; title: string }
   | { message: string; status: 'running'; title: string };
 
+type BatchActionButtonState = ActionButtonState & {
+  completed: number;
+  total: number;
+};
+
 type PlannedWorkflowAction = {
   advanceOnSuccess?: boolean;
   label: string;
@@ -560,6 +565,41 @@ export function App() {
     [refreshDashboard, refreshWorkflowBrief],
   );
 
+  const handleBatchActionComplete = useCallback(
+    (completedWorkflows: Array<WorkflowItem>) => {
+      const advanceIds = completedWorkflows.map((workflow) => workflow.id);
+      if (advanceIds.length) {
+        setLocalState((current) =>
+          advanceIds.reduce(
+            (state, id) => dismissWorkflowInState(state, id),
+            current,
+          ),
+        );
+        setSelectedWorkflowId(null);
+        void Promise.all(advanceIds.map((id) => persistDismissedWorkflow(id)))
+          .then((serverStates) => {
+            setLocalState((current) =>
+              serverStates
+                .filter((state): state is LocalState => Boolean(state))
+                .reduce(
+                  (merged, serverState) => mergeLocalState(merged, serverState),
+                  current,
+                ),
+            );
+          })
+          .catch(() => undefined);
+      }
+      void refreshDashboard(true);
+      void refreshWorkflowBrief(true);
+      void fetchUserState()
+        .then((serverState) => {
+          setLocalState((current) => mergeLocalState(current, serverState));
+        })
+        .catch(() => undefined);
+    },
+    [refreshDashboard, refreshWorkflowBrief],
+  );
+
   const handleRestoreSkipped = useCallback(() => {
     const ids = Object.keys(localState.dismissed);
     setLocalState((current) => ({ ...current, dismissed: {} }));
@@ -651,6 +691,7 @@ export function App() {
                 onQueryChange={setQuery}
                 onRestoreSkipped={handleRestoreSkipped}
                 onSelect={setSelectedWorkflowId}
+                onWorkflowBatchComplete={handleBatchActionComplete}
                 onWorkflowActionComplete={handleActionComplete}
                 parallelPlan={parallelPlan}
                 plan={projectPlan}
@@ -1327,6 +1368,7 @@ function ProjectPlanRail({
   onQueryChange,
   onRestoreSkipped,
   onSelect,
+  onWorkflowBatchComplete,
   onWorkflowActionComplete,
   parallelPlan,
   plan,
@@ -1344,6 +1386,7 @@ function ProjectPlanRail({
   onQueryChange: (query: string) => void;
   onRestoreSkipped: () => void;
   onSelect: (id: string) => void;
+  onWorkflowBatchComplete: (workflows: Array<WorkflowItem>) => void;
   onWorkflowActionComplete: (workflow: WorkflowItem, shouldAdvance: boolean) => void;
   parallelPlan: ParallelPlan | null;
   plan: ProjectPlan;
@@ -1444,6 +1487,7 @@ function ProjectPlanRail({
           dashboard={dashboard}
           laneLoad={laneLoad}
           onActionComplete={onWorkflowActionComplete}
+          onBatchComplete={onWorkflowBatchComplete}
           onSelect={onSelect}
           plan={parallelPlan}
           selectedWorkflowId={selectedWorkflowId}
@@ -1895,6 +1939,7 @@ function ParallelLanesPanel({
   dashboard,
   laneLoad,
   onActionComplete,
+  onBatchComplete,
   onSelect,
   plan,
   selectedWorkflowId,
@@ -1904,6 +1949,7 @@ function ParallelLanesPanel({
   dashboard: DashboardData;
   laneLoad: LaneLoad;
   onActionComplete: (workflow: WorkflowItem, shouldAdvance: boolean) => void;
+  onBatchComplete: (workflows: Array<WorkflowItem>) => void;
   onSelect: (id: string) => void;
   plan: ParallelPlan;
   selectedWorkflowId: string;
@@ -1917,6 +1963,13 @@ function ParallelLanesPanel({
     workflows,
   });
   const batchPacket = buildParallelBatchPacket({ batch, dashboard, plan, workflows });
+  const batchLaneActions = safeBatchLaneActions({
+    batch,
+    dashboard,
+    laneLoad,
+    lanes: plan.lanes,
+    workflows,
+  });
 
   return (
     <section className="parallel-lanes" data-parallel-lanes={plan.source}>
@@ -1971,6 +2024,12 @@ function ParallelLanesPanel({
               text={batchPacket}
               testId="copy-batch-packet"
             />
+            {batchLaneActions.length ? (
+              <BatchWorkflowActionButton
+                actions={batchLaneActions}
+                onBatchComplete={onBatchComplete}
+              />
+            ) : null}
           </div>
         </div>
         <div className="parallel-batch-lanes">
@@ -2385,6 +2444,134 @@ function WorkflowActionButton({
         <div
           className={`action-result action-result-${state.status}`}
           data-testid="workflow-action-result"
+          role="status"
+        >
+          <strong>{state.title}</strong>
+          <span>{state.message}</span>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+function BatchWorkflowActionButton({
+  actions,
+  onBatchComplete,
+}: {
+  actions: Array<RunnableLaneAction>;
+  onBatchComplete: (workflows: Array<WorkflowItem>) => void;
+}) {
+  const actionSignature = useMemo(
+    () =>
+      actions
+        .map((item) => `${item.workflow.id}:${JSON.stringify(item.action.request)}`)
+        .join('|'),
+    [actions],
+  );
+  const [state, setState] = useState<BatchActionButtonState>({
+    completed: 0,
+    message: '',
+    status: 'idle',
+    title: '',
+    total: actions.length,
+  });
+
+  useEffect(() => {
+    setState({
+      completed: 0,
+      message: '',
+      status: 'idle',
+      title: '',
+      total: actions.length,
+    });
+  }, [actionSignature, actions.length]);
+
+  const runBatch = useCallback(async () => {
+    const completed: Array<WorkflowItem> = [];
+    setState({
+      completed: 0,
+      message: `Starting ${moveCount(actions.length, 'lane')}.`,
+      status: 'running',
+      title: 'Running safe batch',
+      total: actions.length,
+    });
+
+    try {
+      for (const [index, item] of actions.entries()) {
+        setState({
+          completed: index,
+          message: item.workflow.title,
+          status: 'running',
+          title: `Running ${index + 1}/${actions.length}`,
+          total: actions.length,
+        });
+        const response = await fetch('/api/workflow-action', {
+          body: JSON.stringify(item.action.request),
+          headers: { 'content-type': 'application/json' },
+          method: 'POST',
+        });
+        const payload = (await response.json()) as Partial<WorkflowActionResponse> & {
+          error?: string;
+        };
+        if (!response.ok || !payload.ok) {
+          throw new Error(
+            `${item.workflow.title}: ${payload.error ?? `Action failed with ${response.status}`}`,
+          );
+        }
+        completed.push(item.workflow);
+      }
+
+      setState({
+        completed: completed.length,
+        message: `${moveCount(completed.length, 'lane')} handed off. Moving them out of the queue.`,
+        status: 'done',
+        title: 'Safe batch handed off',
+        total: actions.length,
+      });
+      window.setTimeout(() => onBatchComplete(completed), 900);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to run safe batch';
+      setState({
+        completed: completed.length,
+        message: completed.length
+          ? `${moveCount(completed.length, 'lane')} handed off before stop. ${message}`
+          : message,
+        status: 'failed',
+        title: 'Batch stopped',
+        total: actions.length,
+      });
+      if (completed.length) {
+        window.setTimeout(() => onBatchComplete(completed), 1200);
+      }
+    }
+  }, [actions, onBatchComplete]);
+
+  return (
+    <>
+      <button
+        className="ghost-button action-button parallel-batch-copy-button parallel-batch-run-button"
+        data-action-state={state.status}
+        data-testid="run-safe-batch"
+        disabled={state.status === 'running' || !actions.length}
+        onClick={() => void runBatch()}
+        title={`Run ${moveCount(actions.length, 'safe lane')} from this batch`}
+        type="button"
+      >
+        {state.status === 'running' ? (
+          <Loader2 aria-hidden="true" className="spin" size={14} />
+        ) : state.status === 'done' ? (
+          <Check aria-hidden="true" size={14} />
+        ) : (
+          <Play aria-hidden="true" size={14} />
+        )}
+        {state.status === 'running'
+          ? `Running ${state.completed + 1}/${state.total}`
+          : 'Run safe batch'}
+      </button>
+      {state.status !== 'idle' ? (
+        <div
+          className={`action-result action-result-${state.status}`}
+          data-testid="safe-batch-action-result"
           role="status"
         >
           <strong>{state.title}</strong>
@@ -3008,6 +3195,41 @@ function nextSafeLaneAction({
     }
   }
   return null;
+}
+
+function safeBatchLaneActions({
+  batch,
+  dashboard,
+  laneLoad,
+  lanes,
+  workflows,
+}: {
+  batch: ParallelBatch;
+  dashboard: DashboardData;
+  laneLoad: LaneLoad;
+  lanes: Array<ParallelLane>;
+  workflows: Array<WorkflowItem>;
+}): Array<RunnableLaneAction> {
+  const laneById = new Map(lanes.map((lane) => [lane.id, lane]));
+  const actions: Array<RunnableLaneAction> = [];
+
+  for (const decision of batch.decisions) {
+    if (decision.status !== 'ready') continue;
+    const lane = laneById.get(decision.id);
+    const workflow = decision.workflowId
+      ? workflows.find((candidate) => candidate.id === decision.workflowId) ?? null
+      : null;
+    if (!lane || !workflow) continue;
+    const laneAction = laneActionFor({ dashboard, lane, laneLoad, workflow });
+    if (
+      laneAction?.guard.runnable &&
+      automatedActionKind(laneAction.action.request.kind)
+    ) {
+      actions.push(laneAction);
+    }
+  }
+
+  return actions;
 }
 
 function parallelBatchFor({

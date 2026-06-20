@@ -338,7 +338,7 @@ function runGenerator() {
         ...process.env,
         TICKETBOARD_URL: baseUrl,
       },
-      stdio: 'inherit',
+      stdio: ['ignore', 'inherit', 'inherit'],
     });
     child.on('error', (error) => {
       console.error(`[brief:watch] failed to start generator: ${error.message}`);

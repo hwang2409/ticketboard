@@ -2,7 +2,12 @@
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname } from 'node:path';
 
 const args = new Set(process.argv.slice(2));
@@ -53,14 +58,21 @@ if (dryRun) {
     fingerprintPath,
     promptPath,
     promptTransport: 'argv',
+    stdinTransport: codexStdinTransportName(),
     snapshotPath,
   }, null, 2));
   process.exit(0);
 }
 
-const result = spawnSync(codexBin, ['exec', ...codexArgs, '--cd', process.cwd(), prompt], {
-  stdio: ['ignore', 'inherit', 'inherit'],
-});
+const codexStdin = codexStdinTransport();
+let result;
+try {
+  result = spawnSync(codexBin, ['exec', ...codexArgs, '--cd', process.cwd(), prompt], {
+    stdio: [codexStdin.stdio, 'inherit', 'inherit'],
+  });
+} finally {
+  codexStdin.close();
+}
 
 if (result.error) {
   throw result.error;
@@ -107,6 +119,43 @@ function hasFlag(values, flag) {
 
 function hasOption(values, option) {
   return values.some((value) => value === option || value.startsWith(`${option}=`));
+}
+
+function codexStdinTransport() {
+  if (process.stdin.isTTY) {
+    return {
+      close() {},
+      stdio: 'inherit',
+    };
+  }
+
+  try {
+    const fd = openSync('/dev/tty', 'r');
+    return {
+      close() {
+        closeSync(fd);
+      },
+      stdio: fd,
+    };
+  } catch {
+    return {
+      close() {},
+      stdio: 'ignore',
+    };
+  }
+}
+
+function codexStdinTransportName() {
+  if (process.stdin.isTTY) {
+    return 'inherit';
+  }
+  try {
+    const fd = openSync('/dev/tty', 'r');
+    closeSync(fd);
+    return '/dev/tty';
+  } catch {
+    return 'ignore';
+  }
 }
 
 function buildPrompt({ briefPath, evidenceFingerprint, snapshotPath }) {
