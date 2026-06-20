@@ -428,6 +428,21 @@ export type WorkflowBriefLane = WorkflowBriefItem & {
   status?: string;
 };
 
+export type WorkflowRefreshRequest = {
+  active: boolean;
+  ageSeconds?: number | null;
+  handoffId?: string | null;
+  kind?: string | null;
+  path: string;
+  prNumber?: number | null;
+  reason?: string | null;
+  requestedAt?: string | null;
+  source?: string | null;
+  ticketId?: string | null;
+  title?: string | null;
+  workflowId?: string | null;
+};
+
 export type WorkflowBrief = {
   version: 1;
   generatedAt: string;
@@ -436,6 +451,8 @@ export type WorkflowBrief = {
     evidenceFingerprint?: string;
     evidenceSnapshotPath?: string;
     planDocPath?: string | null;
+    planDocPaths?: Array<string>;
+    refreshRequest?: Omit<WorkflowRefreshRequest, 'ageSeconds'> | null;
   };
   operatingMode?: {
     summary?: string;
@@ -470,20 +487,7 @@ export type WorkflowBriefResponse = {
     lockPath: string;
     lockStale: boolean;
     lockTtlSeconds: number;
-    refreshRequest?: {
-      active: boolean;
-      ageSeconds?: number | null;
-      handoffId?: string | null;
-      kind?: string | null;
-      path: string;
-      prNumber?: number | null;
-      reason?: string | null;
-      requestedAt?: string | null;
-      source?: string | null;
-      ticketId?: string | null;
-      title?: string | null;
-      workflowId?: string | null;
-    };
+    refreshRequest?: WorkflowRefreshRequest;
     snapshotPath: string | null;
   };
 };

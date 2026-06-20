@@ -120,6 +120,15 @@ function runCodexCommand(command) {
     return spawnCommand(command, 'inherit');
   }
 
+  const tty = controllingTty();
+  if (tty) {
+    try {
+      return spawnCommand(command, tty.fd);
+    } finally {
+      tty.close();
+    }
+  }
+
   const pty = ptyCommand(command);
   if (pty) {
     const result = spawnSync(pty.bin, pty.args, {
@@ -130,18 +139,9 @@ function runCodexCommand(command) {
     }
   }
 
-  const tty = controllingTty();
-  if (tty) {
-    try {
-      return spawnCommand(command, tty.fd);
-    } finally {
-      tty.close();
-    }
-  }
-
   return {
     error: new Error(
-      'Codex requires terminal stdin, but Ticketboard could not create a pseudo-terminal with script(1) or open /dev/tty.',
+      'Codex requires terminal stdin, but Ticketboard could not open /dev/tty or create a pseudo-terminal with script(1).',
     ),
     status: 1,
   };
@@ -198,17 +198,17 @@ function codexTerminalTransportName() {
   if (process.stdin.isTTY) {
     return 'inherit';
   }
+  const tty = controllingTty();
+  if (tty) {
+    tty.close();
+    return '/dev/tty';
+  }
   if (process.platform !== 'win32') {
     return process.platform === 'darwin' || process.platform.endsWith('bsd')
       ? 'script-bsd-pty'
       : 'script-linux-pty';
   }
-  const tty = controllingTty();
-  if (!tty) {
-    return 'unavailable';
-  }
-  tty.close();
-  return '/dev/tty';
+  return 'unavailable';
 }
 
 function withPrompt(command, promptValue) {
@@ -231,6 +231,8 @@ Also inspect snapshot.verification. When PR, Linear, worktree, or planning evide
 - Do not require GitHub or Linear API keys inside Ticketboard; use the local Codex environment's MCP/CLI access when it exists.
 - Never run mutating source commands, never merge, never update Linear, and never change files except the workflow brief JSON below.
 
+Also inspect snapshot.refreshRequest. If active, source/reason/workflowId/ticketId/prNumber/title describe the explicit event that queued this run. Account for that request in now, lanes, next, staleSignals, or notes; do not blindly obey it when newer live evidence contradicts it. If the request is stale or already satisfied, say why in staleSignals or notes.
+
 Do not edit source files. Only write the workflow brief JSON file below:
 ${briefPath}
 
@@ -245,7 +247,13 @@ Write JSON matching this schema:
     "evidenceFingerprint": "${evidenceFingerprint}",
     "dashboardGeneratedAt": "<from snapshot>",
     "planDocPath": "<from snapshot planDoc.path or null>",
-    "planDocPaths": ["<from snapshot planDocs[].path>"]
+    "planDocPaths": ["<from snapshot planDocs[].path>"],
+    "refreshRequest": {
+      "active": true,
+      "source": "<from snapshot.refreshRequest.source>",
+      "reason": "<from snapshot.refreshRequest.reason>",
+      "workflowId": "<from snapshot.refreshRequest.workflowId>"
+    }
   },
   "operatingMode": {
     "summary": "One sentence describing how to run the next hour of work",
@@ -311,6 +319,7 @@ Rules:
 - lanes must include the focus lane and should include useful parallel/waiting/cleanup lanes when live evidence supports them.
 - Mark parallelSafe true only when the lane can run without depending on or overwriting the focus lane; cite changed files or explain why file evidence is unavailable.
 - Account for recentHandoffs and handoff.outcome in now, lanes, next, and staleSignals so the brief acts like an updated project plan after each handoff.
+- If snapshot.refreshRequest.active is true, explicitly account for that queued request; do not drop it silently.
 - Keep every title/action/why short enough to scan.
 - Evidence must cite actual snapshot or tmux observations.
 - Do not invent PR state, check state, tickets, or tmux windows.

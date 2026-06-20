@@ -20,7 +20,7 @@ DEFAULT_WORKFLOW_LOCK_TTL_MS = 30 * 60 * 1000
 MAX_PLAN_DOC_CHARS = 40_000
 MAX_PLAN_DOCS = 6
 MAX_PLAN_DOC_SIGNAL_LINES = 8
-VOLATILE_EVIDENCE_KEYS = {"dashboardGeneratedAt", "generatedAt"}
+VOLATILE_EVIDENCE_KEYS = {"dashboardGeneratedAt", "generatedAt", "refreshRequest"}
 TICKET_ID_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]{1,9}-\d+\b")
 
 
@@ -161,6 +161,28 @@ def workflow_refresh_request_status(brief_path: Path) -> dict[str, Any]:
         "ticketId": payload.get("ticketId"),
         "title": payload.get("title"),
         "workflowId": payload.get("workflowId"),
+    }
+
+
+def workflow_refresh_request_evidence(brief_path: Path) -> dict[str, Any]:
+    status = workflow_refresh_request_status(brief_path)
+    if not status.get("active"):
+        return {
+            "active": False,
+            "path": status.get("path"),
+        }
+    return {
+        "active": True,
+        "handoffId": status.get("handoffId"),
+        "kind": status.get("kind"),
+        "path": status.get("path"),
+        "prNumber": status.get("prNumber"),
+        "reason": status.get("reason"),
+        "requestedAt": status.get("requestedAt"),
+        "source": status.get("source"),
+        "ticketId": status.get("ticketId"),
+        "title": status.get("title"),
+        "workflowId": status.get("workflowId"),
     }
 
 
@@ -354,6 +376,9 @@ def build_workflow_evidence_snapshot(
         "recentHandoffs": summarize_recent_handoffs(
             recent_handoffs or [],
             dashboard,
+        ),
+        "refreshRequest": workflow_refresh_request_evidence(
+            workflow_brief_path(settings),
         ),
         "diagnostics": dashboard.get("diagnostics", []),
         "verification": build_source_verification(dashboard),

@@ -790,6 +790,7 @@ function validateWorkflowEvidenceShape(response) {
   const planDocs = response?.snapshot?.planDocs;
   const planningSignals = response?.snapshot?.planningSignals;
   const prs = response?.snapshot?.prs;
+  const refreshRequest = response?.snapshot?.refreshRequest;
   const verification = response?.snapshot?.verification;
   if (
     !response ||
@@ -804,13 +805,19 @@ function validateWorkflowEvidenceShape(response) {
     !Array.isArray(planningSignals.ticketIds) ||
     !Array.isArray(recentHandoffs) ||
     !Array.isArray(prs) ||
+    !refreshRequest ||
+    typeof refreshRequest !== 'object' ||
     !verification ||
     typeof verification !== 'object' ||
     !Array.isArray(verification.mcpHints) ||
     !verification.commands ||
     typeof verification.commands !== 'object'
   ) {
-    throw new Error('Expected workflow evidence snapshot to include plan docs, recent handoffs, PRs, and verification hints');
+    throw new Error('Expected workflow evidence snapshot to include plan docs, recent handoffs, refresh requests, PRs, and verification hints');
+  }
+  validateRefreshRequestShape(refreshRequest);
+  if ('ageSeconds' in refreshRequest) {
+    throw new Error('Expected workflow evidence refresh request to omit volatile ageSeconds');
   }
   for (const key of ['git', 'github', 'tmux']) {
     if (!Array.isArray(verification.commands[key])) {
