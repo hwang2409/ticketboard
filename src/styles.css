@@ -1067,6 +1067,105 @@ button.plan-digest-item {
   border-left-color: var(--green);
 }
 
+.project-pulse {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--surface);
+}
+
+.project-pulse-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.project-pulse-head small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.project-pulse-list {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.project-pulse-list > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.project-pulse-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: start;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--border-strong);
+  background: var(--surface-muted);
+  color: var(--foreground);
+  cursor: pointer;
+  text-align: left;
+}
+
+.project-pulse-item:hover,
+.project-pulse-item:focus-visible {
+  border-color: var(--foreground);
+}
+
+.project-pulse-item span {
+  display: grid;
+  min-width: 0;
+  gap: 0.18rem;
+}
+
+.project-pulse-item strong,
+.project-pulse-item em,
+.project-pulse-item small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-pulse-item strong {
+  font-size: 0.78rem;
+}
+
+.project-pulse-item em,
+.project-pulse-item small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.project-pulse-item small {
+  justify-self: end;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.project-pulse-item-hot {
+  border-left-color: var(--danger);
+}
+
+.project-pulse-item-warn {
+  border-left-color: var(--warning);
+}
+
+.project-pulse-item-ready {
+  border-left-color: var(--green);
+}
+
 .lane-load {
   display: grid;
   gap: 0.5rem;
@@ -2432,6 +2531,7 @@ button.plan-item {
   }
 
   .parallel-head,
+  .project-pulse-item,
   .lane-load-item,
   .handoff-item,
   .unlock-item,
@@ -2461,6 +2561,7 @@ button.plan-item {
     text-align: left;
   }
 
+  .project-pulse-head,
   .lane-load-head {
     align-items: flex-start;
     flex-direction: column;
@@ -2478,6 +2579,8 @@ button.plan-item {
     border-bottom: 1px solid var(--border);
   }
 
+  .project-pulse-head small,
+  .project-pulse-item small,
   .lane-load-head small,
   .lane-load-item small {
     justify-self: start;

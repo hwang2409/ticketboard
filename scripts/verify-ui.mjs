@@ -103,6 +103,13 @@ async function verifyViewport({ width, height, screenshot }) {
     if ((await page.locator('[data-plan-digest-item]').count()) < 1) {
       throw new Error('Expected compact generated plan digest items');
     }
+    await page.waitForSelector('[data-project-pulse]', { timeout: 10_000 });
+    if (
+      dashboard.linearTickets.some((ticket) => ticket.projectName) &&
+      (await page.locator('[data-project-pulse-item]').count()) < 1
+    ) {
+      throw new Error('Expected project pulse to group workflows by Linear project');
+    }
     await page.waitForSelector('[data-lane-load]', { timeout: 10_000 });
     const hasLiveLane =
       dashboard.codexSessions.some((session) => ['goal-active', 'running'].includes(session.status)) ||

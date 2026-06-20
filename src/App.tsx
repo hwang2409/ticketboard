@@ -187,6 +187,22 @@ type UnlockMap = {
   summary: string;
 };
 
+type ProjectPulseItem = {
+  activeCount: number;
+  detail: string;
+  id: string;
+  meta: string;
+  title: string;
+  tone: ProjectPlanTone;
+  workflowCount: number;
+  workflowId: string;
+};
+
+type ProjectPulse = {
+  items: Array<ProjectPulseItem>;
+  summary: string;
+};
+
 type LaneLoadTone = 'active' | 'over' | 'warn';
 
 type LaneLoadItem = {
@@ -1319,6 +1335,8 @@ function ProjectPlanRail({
         selectedWorkflowId={selectedWorkflowId}
       />
 
+      <ProjectPulsePanel onSelect={onSelect} workflows={workflows} />
+
       <LaneLoadPanel
         load={laneLoad}
         onSelect={onSelect}
@@ -1481,6 +1499,46 @@ function PlanDigestItem({
     <span className={className} data-plan-digest-item={item.id}>
       {content}
     </span>
+  );
+}
+
+function ProjectPulsePanel({
+  onSelect,
+  workflows,
+}: {
+  onSelect: (id: string) => void;
+  workflows: Array<WorkflowItem>;
+}) {
+  const pulse = buildProjectPulse(workflows);
+
+  return (
+    <section className="project-pulse" data-project-pulse>
+      <div className="project-pulse-head">
+        <span className="section-kicker">Project pulse</span>
+        <small>{pulse.summary}</small>
+      </div>
+      <div className="project-pulse-list">
+        {pulse.items.length ? (
+          pulse.items.map((item) => (
+            <button
+              className={`project-pulse-item project-pulse-item-${item.tone}`}
+              data-project-pulse-item={item.id}
+              key={item.id}
+              onClick={() => onSelect(item.workflowId)}
+              type="button"
+            >
+              <span>
+                <strong>{item.title}</strong>
+                <em>{item.detail}</em>
+              </span>
+              <small>{item.meta}</small>
+            </button>
+          ))
+        ) : (
+          <p>No Linear project grouping is visible.</p>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -3022,6 +3080,79 @@ function parallelPlanSummary({
   return `${prefix} ${parts.join('; ')}.`;
 }
 
+function buildProjectPulse(workflows: Array<WorkflowItem>): ProjectPulse {
+  const groups = new Map<string, Array<WorkflowItem>>();
+  for (const workflow of workflows) {
+    const projectName = projectNameForWorkflow(workflow);
+    if (!projectName) continue;
+    groups.set(projectName, [...(groups.get(projectName) ?? []), workflow]);
+  }
+
+  const items = [...groups.entries()]
+    .map(([projectName, projectWorkflows]) =>
+      projectPulseItem(projectName, projectWorkflows),
+    )
+    .filter((item): item is ProjectPulseItem => Boolean(item))
+    .sort(
+      (left, right) =>
+        projectPulseToneRank(left.tone) - projectPulseToneRank(right.tone) ||
+        right.activeCount - left.activeCount ||
+        right.workflowCount - left.workflowCount,
+    )
+    .slice(0, 4);
+
+  return {
+    items,
+    summary: items.length
+      ? `${moveCount(items.length, 'project lane')} active`
+      : 'No project lanes visible',
+  };
+}
+
+function projectPulseItem(
+  projectName: string,
+  workflows: Array<WorkflowItem>,
+): ProjectPulseItem | null {
+  const ordered = [...workflows].sort((left, right) => right.score - left.score);
+  const top = ordered[0] ?? null;
+  if (!top) return null;
+  const activeCount = ordered.filter(workflowHasLiveLane).length;
+  const hotCount = ordered.filter((workflow) => workflow.tone === 'hot').length;
+  const tone: ProjectPlanTone = hotCount
+    ? 'hot'
+    : activeCount
+      ? 'warn'
+      : top.intent === 'ship'
+        ? 'ready'
+        : 'calm';
+  const pressure = activeCount
+    ? `${moveCount(activeCount, 'active lane')}; `
+    : '';
+
+  return {
+    activeCount,
+    detail: `${pressure}${truncate(top.nextStep, 84)}`,
+    id: `project:${slugify(projectName)}`,
+    meta: moveCount(ordered.length, 'workflow'),
+    title: projectName,
+    tone,
+    workflowCount: ordered.length,
+    workflowId: top.id,
+  };
+}
+
+function projectNameForWorkflow(workflow: WorkflowItem) {
+  const projectName = workflow.linearTicket?.projectName?.trim();
+  return projectName || null;
+}
+
+function projectPulseToneRank(tone: ProjectPlanTone) {
+  if (tone === 'hot') return 0;
+  if (tone === 'warn') return 1;
+  if (tone === 'ready') return 2;
+  return 3;
+}
+
 function buildLaneLoad({
   parallelPlan,
   workflows,
@@ -4437,11 +4568,14 @@ function runningLabelFor(label: string) {
 }
 
 function workflowTitleSlug(workflow: WorkflowItem) {
-  return workflow.title
+  return slugify(workflow.title).slice(0, 32);
+}
+
+function slugify(value: string) {
+  return value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 32);
+    .replace(/^-|-$/g, '') || 'unknown';
 }
 
 function scoreWorkflow({
