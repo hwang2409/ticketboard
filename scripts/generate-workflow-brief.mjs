@@ -21,9 +21,11 @@ const PERMISSION_BYPASS_ARGS = [
   '--dangerously-bypass-approvals-and-sandbox',
   '--dangerously-bypass-hook-trust',
 ];
+const PROMPT_ARGUMENT_PLACEHOLDER = '<prompt argument>';
 const baseUrl = (urlArg?.slice('--url='.length) ?? process.env.TICKETBOARD_URL ?? 'http://127.0.0.1:4317').replace(/\/$/, '');
 const codexBin = codexArg?.slice('--codex-bin='.length) ?? process.env.TICKETBOARD_CODEX_BIN ?? 'codex';
 const codexArgs = buildCodexArgs();
+const codexCommand = [codexBin, 'exec', ...codexArgs, '--cd', process.cwd(), PROMPT_ARGUMENT_PLACEHOLDER];
 const dryRun = args.has('--dry-run');
 
 const response = await fetch(
@@ -53,26 +55,18 @@ writeFileSync(promptPath, prompt);
 if (dryRun) {
   console.log(JSON.stringify({
     briefPath,
-    codexCommand: [codexBin, 'exec', ...codexArgs, '--cd', process.cwd(), '<prompt argument>'],
+    codexCommand,
     evidenceFingerprint,
     fingerprintPath,
     promptPath,
     promptTransport: 'argv',
-    stdinTransport: codexStdinTransportName(),
+    terminalTransport: codexTerminalTransportName(),
     snapshotPath,
   }, null, 2));
   process.exit(0);
 }
 
-const codexStdin = codexStdinTransport();
-let result;
-try {
-  result = spawnSync(codexBin, ['exec', ...codexArgs, '--cd', process.cwd(), prompt], {
-    stdio: [codexStdin.stdio, 'inherit', 'inherit'],
-  });
-} finally {
-  codexStdin.close();
-}
+const result = runCodexCommand(withPrompt(codexCommand, prompt));
 
 if (result.error) {
   throw result.error;
@@ -121,41 +115,104 @@ function hasOption(values, option) {
   return values.some((value) => value === option || value.startsWith(`${option}=`));
 }
 
-function codexStdinTransport() {
+function runCodexCommand(command) {
   if (process.stdin.isTTY) {
-    return {
-      close() {},
-      stdio: 'inherit',
-    };
+    return spawnCommand(command, 'inherit');
   }
 
+  const pty = ptyCommand(command);
+  if (pty) {
+    const result = spawnSync(pty.bin, pty.args, {
+      stdio: ['ignore', 'inherit', 'inherit'],
+    });
+    if (!result.error || result.error.code !== 'ENOENT') {
+      return result;
+    }
+  }
+
+  const tty = controllingTty();
+  if (tty) {
+    try {
+      return spawnCommand(command, tty.fd);
+    } finally {
+      tty.close();
+    }
+  }
+
+  return {
+    error: new Error(
+      'Codex requires terminal stdin, but Ticketboard could not create a pseudo-terminal with script(1) or open /dev/tty.',
+    ),
+    status: 1,
+  };
+}
+
+function spawnCommand(command, stdin) {
+  return spawnSync(command[0], command.slice(1), {
+    stdio: [stdin, 'inherit', 'inherit'],
+  });
+}
+
+function ptyCommand(command) {
+  if (process.platform === 'win32') {
+    return null;
+  }
+  if (process.platform === 'darwin' || process.platform.endsWith('bsd')) {
+    return {
+      args: ['-q', '/dev/null', ...command],
+      bin: 'script',
+    };
+  }
+  return {
+    args: ['-q', '-e', '-c', shellCommand(command), '/dev/null'],
+    bin: 'script',
+  };
+}
+
+function shellCommand(command) {
+  return command.map(shellQuote).join(' ');
+}
+
+function shellQuote(value) {
+  if (value === '') {
+    return "''";
+  }
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function controllingTty() {
   try {
     const fd = openSync('/dev/tty', 'r');
     return {
       close() {
         closeSync(fd);
       },
-      stdio: fd,
+      fd,
     };
   } catch {
-    return {
-      close() {},
-      stdio: 'ignore',
-    };
+    return null;
   }
 }
 
-function codexStdinTransportName() {
+function codexTerminalTransportName() {
   if (process.stdin.isTTY) {
     return 'inherit';
   }
-  try {
-    const fd = openSync('/dev/tty', 'r');
-    closeSync(fd);
-    return '/dev/tty';
-  } catch {
-    return 'ignore';
+  if (process.platform !== 'win32') {
+    return process.platform === 'darwin' || process.platform.endsWith('bsd')
+      ? 'script-bsd-pty'
+      : 'script-linux-pty';
   }
+  const tty = controllingTty();
+  if (!tty) {
+    return 'unavailable';
+  }
+  tty.close();
+  return '/dev/tty';
+}
+
+function withPrompt(command, promptValue) {
+  return command.map((part) => (part === PROMPT_ARGUMENT_PLACEHOLDER ? promptValue : part));
 }
 
 function buildPrompt({ briefPath, evidenceFingerprint, snapshotPath }) {

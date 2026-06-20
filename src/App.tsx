@@ -666,6 +666,7 @@ export function App() {
             <div className="operator-grid">
               <PrimaryWorkflow
                 dashboard={dashboard}
+                handoffs={localState.handoffs}
                 onRefreshBrief={() => {
                   void refreshWorkflowBrief(true);
                 }}
@@ -976,6 +977,7 @@ function EmptyWorkflowState({
 
 function PrimaryWorkflow({
   dashboard,
+  handoffs,
   onActionComplete,
   onRefreshBrief,
   onSkip,
@@ -984,6 +986,7 @@ function PrimaryWorkflow({
   workflowBriefStatus,
 }: {
   dashboard: DashboardData;
+  handoffs: Array<HandoffEvent>;
   onActionComplete: (shouldAdvance: boolean) => void;
   onRefreshBrief: () => void;
   onSkip: (workflow: WorkflowItem) => void;
@@ -1050,6 +1053,7 @@ function PrimaryWorkflow({
       ) : null}
 
       <WorkflowAutomationPanel
+        handoffs={handoffs}
         onRefresh={onRefreshBrief}
         status={workflowBriefStatus}
       />
@@ -1217,9 +1221,11 @@ function WorkflowBriefStatus({ status }: { status: WorkflowBriefResponse }) {
 }
 
 function WorkflowAutomationPanel({
+  handoffs,
   onRefresh,
   status,
 }: {
+  handoffs: Array<HandoffEvent>;
   onRefresh: () => void;
   status: WorkflowBriefResponse | null;
 }) {
@@ -1238,12 +1244,15 @@ function WorkflowAutomationPanel({
       ? 'stale'
       : 'idle';
   const fingerprintStatus = automation?.fingerprintStatus ?? 'none';
+  const pendingHandoff = latestHandoffAfterBrief(handoffs, status);
+  const briefRefreshOwed = Boolean(pendingHandoff);
 
   return (
     <section
       className={`workflow-automation workflow-automation-${status.status}`}
       data-automation-lock-state={lockState}
       data-automation-status={status.status}
+      data-brief-refresh-owed={briefRefreshOwed ? 'true' : 'false'}
       data-workflow-automation
     >
       <div className="automation-head">
@@ -1259,7 +1268,7 @@ function WorkflowAutomationPanel({
           <strong>
             {briefStatusLabel(status.status)} / {lockStateLabel(lockState)}
           </strong>
-          <em>{briefAutomationSummary(status, remainingSeconds)}</em>
+          <em>{briefAutomationSummary(status, remainingSeconds, pendingHandoff)}</em>
         </p>
       </div>
       <div className="automation-facts">
@@ -1276,8 +1285,12 @@ function WorkflowAutomationPanel({
           <em>watch cadence</em>
         </span>
         <span>
-          <b>{fingerprintStatusLabel(fingerprintStatus)}</b>
-          <em>{shortFingerprint(automation?.evidenceFingerprint ?? null)}</em>
+          <b>{briefRefreshOwed ? 'owed' : fingerprintStatusLabel(fingerprintStatus)}</b>
+          <em>
+            {pendingHandoff
+              ? `${handoffKindLabel(pendingHandoff.kind)} ${formatRelativeTime(pendingHandoff.ranAt)}`
+              : shortFingerprint(automation?.evidenceFingerprint ?? null)}
+          </em>
         </span>
       </div>
       <code>{automation?.fingerprintPath ?? status.path}</code>
@@ -1308,9 +1321,13 @@ function lockStateLabel(state: 'active' | 'idle' | 'stale') {
 function briefAutomationSummary(
   status: WorkflowBriefResponse,
   remainingSeconds: number | null,
+  pendingHandoff: HandoffEvent | null,
 ) {
   if (status.automation?.lockActive) {
     return 'A Codex generator lock is active, so another watcher should wait.';
+  }
+  if (pendingHandoff) {
+    return `A ${handoffKindLabel(pendingHandoff.kind).toLowerCase()} handoff landed after this brief; the watcher should regenerate from that new evidence.`;
   }
   if (status.status === 'ready') {
     return remainingSeconds !== null && remainingSeconds > 0
@@ -1324,6 +1341,27 @@ function briefAutomationSummary(
     return status.reason ?? 'The next watcher pass should regenerate the brief.';
   }
   return 'Start pnpm brief:watch or run pnpm brief:codex to generate the first brief.';
+}
+
+function latestHandoffAfterBrief(
+  handoffs: Array<HandoffEvent>,
+  status: WorkflowBriefResponse,
+) {
+  const briefUpdatedAt = Math.max(
+    timestampMs(status.brief?.generatedAt ?? ''),
+    timestampMs(status.automation?.fingerprintUpdatedAt ?? ''),
+  );
+  if (!briefUpdatedAt) return null;
+
+  let latest: HandoffEvent | null = null;
+  for (const handoff of handoffs) {
+    const ranAt = timestampMs(handoff.ranAt);
+    if (ranAt <= briefUpdatedAt) continue;
+    if (!latest || ranAt > timestampMs(latest.ranAt)) {
+      latest = handoff;
+    }
+  }
+  return latest;
 }
 
 function InfoColumn({

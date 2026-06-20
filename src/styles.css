@@ -682,6 +682,18 @@ input:focus-visible {
   background: var(--surface);
 }
 
+.workflow-automation[data-brief-refresh-owed="true"] {
+  border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--warning) 9%, transparent), transparent 58%),
+    var(--surface);
+}
+
+.workflow-automation[data-brief-refresh-owed="true"] .automation-summary svg,
+.workflow-automation[data-brief-refresh-owed="true"] .automation-facts span:last-child b {
+  color: var(--warning);
+}
+
 .automation-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

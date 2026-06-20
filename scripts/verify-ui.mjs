@@ -174,6 +174,10 @@ async function verifyViewport({ width, height, screenshot }) {
     if (!['invalid', 'missing', 'ready', 'stale'].includes(automationStatus)) {
       throw new Error(`Expected workflow automation panel to expose brief status, got ${automationStatus}`);
     }
+    const refreshOwed = await page.locator('[data-workflow-automation]').first().getAttribute('data-brief-refresh-owed');
+    if (!['false', 'true'].includes(refreshOwed)) {
+      throw new Error(`Expected workflow automation panel to expose refresh-owed state, got ${refreshOwed}`);
+    }
     if ((await page.locator('[data-testid="command-strip"] .metric-pill').count()) > 0) {
       throw new Error('Workflow command strip should not expose source-count metric pills');
     }
