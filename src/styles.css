@@ -1354,6 +1354,7 @@ button.plan-digest-item {
 
 .handoff-item strong,
 .handoff-item em,
+.handoff-item i,
 .handoff-item small {
   min-width: 0;
   overflow: hidden;
@@ -1366,6 +1367,7 @@ button.plan-digest-item {
 }
 
 .handoff-item em,
+.handoff-item i,
 .handoff-item small {
   color: var(--muted);
   font-size: 0.68rem;
@@ -1376,6 +1378,18 @@ button.plan-digest-item {
 .handoff-item small {
   justify-self: end;
   text-align: right;
+}
+
+.handoff-item-live {
+  border-left-color: var(--green);
+}
+
+.handoff-item-quiet {
+  border-left-color: var(--warning);
+}
+
+.handoff-item-cleared {
+  border-left-color: var(--border-strong);
 }
 
 .unlock-map {
@@ -2628,6 +2642,7 @@ button.plan-item {
     text-align: left;
   }
 
+  .handoff-item i,
   .handoff-item small {
     justify-self: start;
     text-align: left;

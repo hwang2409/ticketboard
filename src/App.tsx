@@ -89,6 +89,12 @@ type LocalState = {
   handoffs: Array<HandoffEvent>;
 };
 
+type HandoffOutcome = {
+  detail: string;
+  label: string;
+  tone: 'cleared' | 'live' | 'quiet';
+};
+
 type ActionButtonState =
   | { message: string; status: 'done'; title: string }
   | { message: string; status: 'failed'; title: string }
@@ -1333,6 +1339,7 @@ function ProjectPlanRail({
     plan,
     projectPulse,
     unlockMap,
+    workflows,
   });
 
   return (
@@ -1372,7 +1379,7 @@ function ProjectPlanRail({
         onSelect={onSelect}
       />
 
-      <HandoffLedger handoffs={handoffs} onSelect={onSelect} />
+      <HandoffLedger handoffs={handoffs} onSelect={onSelect} workflows={workflows} />
 
       <UnlockMapPanel
         onSelect={onSelect}
@@ -1629,12 +1636,15 @@ function LaneLoadPanel({
 function HandoffLedger({
   handoffs,
   onSelect,
+  workflows,
 }: {
   handoffs: Array<HandoffEvent>;
   onSelect: (id: string) => void;
+  workflows: Array<WorkflowItem>;
 }) {
   const recent = handoffs.slice(0, 4);
   if (!recent.length) return null;
+  const workflowsById = new Map(workflows.map((workflow) => [workflow.id, workflow]));
 
   return (
     <section className="handoff-ledger" data-handoff-ledger>
@@ -1643,21 +1653,30 @@ function HandoffLedger({
         <small>{moveCount(recent.length, 'event')}</small>
       </div>
       <div className="handoff-list">
-        {recent.map((handoff) => (
-          <button
-            className="handoff-item"
-            data-handoff-item={handoff.id}
-            key={handoff.id}
-            onClick={() => onSelect(handoff.workflowId)}
-            type="button"
-          >
-            <span>
-              <strong>{readableTitle(handoff.title || handoff.workflowId)}</strong>
-              <em>{handoff.message}</em>
-            </span>
-            <small>{handoffKindLabel(handoff.kind)} / {formatRelativeTime(handoff.ranAt)}</small>
-          </button>
-        ))}
+        {recent.map((handoff) => {
+          const workflow = workflowsById.get(handoff.workflowId) ?? null;
+          const outcome = handoffOutcome(workflow);
+          return (
+            <button
+              className={`handoff-item handoff-item-${outcome.tone}`}
+              data-handoff-item={handoff.id}
+              data-handoff-outcome={outcome.tone}
+              key={handoff.id}
+              onClick={() => onSelect(handoff.workflowId)}
+              title={outcome.detail}
+              type="button"
+            >
+              <span>
+                <strong>{readableTitle(handoff.title || handoff.workflowId)}</strong>
+                <em>{handoff.message}</em>
+                <i>{outcome.detail}</i>
+              </span>
+              <small>
+                {outcome.label} / {handoffKindLabel(handoff.kind)} / {formatRelativeTime(handoff.ranAt)}
+              </small>
+            </button>
+          );
+        })}
       </div>
     </section>
   );
@@ -4138,6 +4157,49 @@ function buildWorkflowHandoff(workflow: WorkflowItem): WorkflowHandoff {
   };
 }
 
+function handoffOutcome(workflow: WorkflowItem | null): HandoffOutcome {
+  if (!workflow) {
+    return {
+      detail: 'The handed-off workflow no longer appears in the active board.',
+      label: 'Cleared',
+      tone: 'cleared',
+    };
+  }
+  if (workflow.sessions.some(isActiveCodexSession)) {
+    return {
+      detail: 'Codex is still active on this handoff.',
+      label: 'Live',
+      tone: 'live',
+    };
+  }
+  if (workflow.windows.length) {
+    return {
+      detail: 'A terminal lane is still open for this handoff.',
+      label: 'Live',
+      tone: 'live',
+    };
+  }
+  if (workflow.worktrees.some((worktree) => (worktree.dirtyCount ?? 0) > 0)) {
+    return {
+      detail: 'Local changes still exist after this handoff.',
+      label: 'Still dirty',
+      tone: 'live',
+    };
+  }
+  if (workflow.intent === 'ship' || workflow.intent === 'clean') {
+    return {
+      detail: workflow.nextStep,
+      label: workflow.intent === 'ship' ? 'Ready' : 'Cleanup',
+      tone: 'quiet',
+    };
+  }
+  return {
+    detail: `No active lane is visible; next visible move is: ${workflow.nextStep}`,
+    label: 'Quiet',
+    tone: 'quiet',
+  };
+}
+
 function doneSoFarForWorkflow(workflow: WorkflowItem) {
   const parts: Array<string> = [];
   const primaryPr = workflow.prs[0] ?? null;
@@ -4295,6 +4357,7 @@ function buildLivePlanPacket({
   plan,
   projectPulse,
   unlockMap,
+  workflows,
 }: {
   dashboard: DashboardData;
   handoffs: Array<HandoffEvent>;
@@ -4304,7 +4367,10 @@ function buildLivePlanPacket({
   plan: ProjectPlan;
   projectPulse: ProjectPulse;
   unlockMap: UnlockMap;
+  workflows: Array<WorkflowItem>;
 }) {
+  const workflowById = new Map(workflows.map((workflow) => [workflow.id, workflow]));
+
   return [
     '# Ticketboard live plan packet',
     '',
@@ -4355,10 +4421,10 @@ function buildLivePlanPacket({
     ...(handoffs.length
       ? handoffs
           .slice(0, 5)
-          .map(
-            (handoff) =>
-              `- ${handoffKindLabel(handoff.kind)} ${formatRelativeTime(handoff.ranAt)}: ${handoff.title} - ${handoff.message}`,
-          )
+          .map((handoff) => {
+            const outcome = handoffOutcome(workflowById.get(handoff.workflowId) ?? null);
+            return `- ${outcome.label}: ${handoffKindLabel(handoff.kind)} ${formatRelativeTime(handoff.ranAt)} - ${handoff.title}; ${outcome.detail}`;
+          })
       : ['- No recent local handoff events are recorded.']),
     '',
     '## Guardrails',

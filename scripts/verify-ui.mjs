@@ -133,6 +133,9 @@ async function verifyViewport({ width, height, screenshot }) {
     if ((await page.locator('[data-handoff-item]').count()) < 1) {
       throw new Error('Expected recent workflow handoffs to render');
     }
+    if ((await page.locator('[data-handoff-outcome]').count()) < 1) {
+      throw new Error('Expected recent handoffs to expose current outcomes');
+    }
     await page.waitForSelector('[data-unlock-map]', { timeout: 10_000 });
     const hasUnlockSource =
       dashboard.tickets.some((ticket) => ticket.state === 'blocked') ||

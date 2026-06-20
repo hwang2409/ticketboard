@@ -12,6 +12,10 @@ const codexArgValues = process.argv
   .filter((arg) => arg.startsWith('--codex-arg='))
   .map((arg) => arg.slice('--codex-arg='.length))
   .filter(Boolean);
+const PERMISSION_BYPASS_ARGS = [
+  '--dangerously-bypass-approvals-and-sandbox',
+  '--dangerously-bypass-hook-trust',
+];
 const baseUrl = (urlArg?.slice('--url='.length) ?? process.env.TICKETBOARD_URL ?? 'http://127.0.0.1:4317').replace(/\/$/, '');
 const codexBin = codexArg?.slice('--codex-bin='.length) ?? process.env.TICKETBOARD_CODEX_BIN ?? 'codex';
 const codexArgs = buildCodexArgs();
@@ -79,14 +83,30 @@ function buildCodexArgs() {
     .split(/\s+/)
     .map((arg) => arg.trim())
     .filter(Boolean);
-  const explicitArgs = [...envArgs, ...codexArgValues];
+  const explicitArgs = [...envArgs, ...codexArgValues]
+    .filter((arg) => arg !== '--yolo');
+  const terminalSafeArgs = [];
+  if (!hasFlag(explicitArgs, '--json')) {
+    terminalSafeArgs.push('--json');
+  }
+  if (!hasOption(explicitArgs, '--color')) {
+    terminalSafeArgs.push('--color', 'never');
+  }
   if (args.has('--no-yolo')) {
-    return explicitArgs.filter((arg) => arg !== '--yolo');
+    return [...terminalSafeArgs, ...explicitArgs.filter((arg) => !PERMISSION_BYPASS_ARGS.includes(arg))];
   }
-  if (explicitArgs.includes('--yolo')) {
-    return explicitArgs;
+  if (explicitArgs.includes('--dangerously-bypass-approvals-and-sandbox')) {
+    return [...terminalSafeArgs, ...explicitArgs];
   }
-  return ['--yolo', ...explicitArgs];
+  return [...terminalSafeArgs, ...PERMISSION_BYPASS_ARGS, ...explicitArgs];
+}
+
+function hasFlag(values, flag) {
+  return values.includes(flag);
+}
+
+function hasOption(values, option) {
+  return values.some((value) => value === option || value.startsWith(`${option}=`));
 }
 
 function buildPrompt({ briefPath, evidenceFingerprint, snapshotPath }) {

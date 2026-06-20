@@ -36,10 +36,13 @@ dev:
 	echo "Starting Codex brief watcher ..."; \
 	$(PNPM) brief:watch $(if $(strip $(BRIEF_WATCH_ARGS)),-- $(BRIEF_WATCH_ARGS)) & \
 	watch_pid=$$!; \
-	while kill -0 "$$dev_pid" 2>/dev/null && kill -0 "$$watch_pid" 2>/dev/null; do \
+	while kill -0 "$$dev_pid" 2>/dev/null; do \
+		if [ -n "$$watch_pid" ] && ! kill -0 "$$watch_pid" 2>/dev/null; then \
+			if ! wait "$$watch_pid"; then \
+				echo "Codex brief watcher exited; Ticketboard dev server is still running."; \
+			fi; \
+			watch_pid=""; \
+		fi; \
 		sleep 1; \
 	done; \
-	if ! kill -0 "$$dev_pid" 2>/dev/null; then \
-		wait "$$dev_pid"; \
-	fi; \
-	wait "$$watch_pid"
+	wait "$$dev_pid"
