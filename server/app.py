@@ -49,6 +49,7 @@ from .workflow_brief import (
     workflow_brief_path,
     workflow_brief_status,
     workflow_evidence_fingerprint,
+    workflow_refresh_request_status,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -410,6 +411,14 @@ async def api_workflow_evidence_snapshot(
             "path": str(path),
             "snapshot": snapshot,
         },
+        request=request,
+    )
+
+
+@app.get("/api/workflow-brief/refresh-request")
+async def api_workflow_refresh_request(request: Request) -> Response:
+    return json_response(
+        workflow_refresh_request_status(workflow_brief_path(settings)),
         request=request,
     )
 

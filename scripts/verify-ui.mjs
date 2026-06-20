@@ -82,6 +82,14 @@ async function verifyViewport({ width, height, screenshot }) {
   }
   const workflowBrief = await briefResponse.json();
   validateWorkflowBriefShape(workflowBrief);
+  const refreshRequestResponse = await page.request.get(
+    `${baseUrl}/api/workflow-brief/refresh-request?verify=${width}x${height}-${Date.now()}`,
+    { headers: { 'cache-control': 'no-cache' }, timeout: API_TIMEOUT_MS },
+  );
+  if (!refreshRequestResponse.ok()) {
+    throw new Error(`Expected workflow refresh-request API to load, got ${refreshRequestResponse.status()}`);
+  }
+  validateRefreshRequestShape(await refreshRequestResponse.json());
   const evidenceResponse = await page.request.get(
     `${baseUrl}/api/workflow-brief/evidence-snapshot?refresh=1&verify=${width}x${height}-${Date.now()}`,
     { headers: { 'cache-control': 'no-cache' }, timeout: API_TIMEOUT_MS },
@@ -741,15 +749,7 @@ function validateWorkflowBriefShape(response) {
   ) {
     throw new Error('Expected workflow brief response automation status');
   }
-  const refreshRequest = response.automation.refreshRequest;
-  if (
-    !refreshRequest ||
-    typeof refreshRequest !== 'object' ||
-    typeof refreshRequest.active !== 'boolean' ||
-    typeof refreshRequest.path !== 'string'
-  ) {
-    throw new Error('Expected workflow brief automation to expose refresh request status');
-  }
+  validateRefreshRequestShape(response.automation.refreshRequest);
   if (response.status === 'ready') {
     const brief = response.brief;
     if (
@@ -768,6 +768,17 @@ function validateWorkflowBriefShape(response) {
         throw new Error(`Expected workflow brief lane ${index} to include title and action`);
       }
     }
+  }
+}
+
+function validateRefreshRequestShape(refreshRequest) {
+  if (
+    !refreshRequest ||
+    typeof refreshRequest !== 'object' ||
+    typeof refreshRequest.active !== 'boolean' ||
+    typeof refreshRequest.path !== 'string'
+  ) {
+    throw new Error('Expected workflow brief automation to expose refresh request status');
   }
 }
 

@@ -4100,6 +4100,7 @@ def empty_codex_token_ranges(ranges: dict[str, dict[str, Any]]) -> dict[str, Any
             "totalTokens": 0,
             "label": window["label"],
             "periodStart": iso_from_datetime(window["start"]) if window["start"] else None,
+            "topSessions": [],
             "trend": codex_trend_points(
                 initial_codex_trend_buckets(window, now),
                 window,

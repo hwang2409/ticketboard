@@ -18,6 +18,7 @@ const DEFAULT_INTERVAL_MS = 10 * 60 * 1000;
 const DEFAULT_RETRY_MS = 60 * 1000;
 const DEFAULT_DRIFT_CHECK_MS = 60 * 1000;
 const DEFAULT_LOCK_TTL_MS = 30 * 60 * 1000;
+const DEFAULT_REFRESH_REQUEST_CHECK_MS = 5 * 1000;
 
 const rawArgs = process.argv.slice(2);
 const args = new Set(rawArgs);
@@ -51,6 +52,12 @@ const lockTtlMs = readMs(
   DEFAULT_LOCK_TTL_MS,
   60 * 1000,
 );
+const refreshRequestCheckMs = readMs(
+  '--refresh-request-check-ms=',
+  'TICKETBOARD_WORKFLOW_REFRESH_REQUEST_CHECK_MS',
+  DEFAULT_REFRESH_REQUEST_CHECK_MS,
+  1000,
+);
 const once = args.has('--once');
 const force = args.has('--force');
 const dryRun = args.has('--dry-run');
@@ -74,6 +81,7 @@ console.log(
     `interval=${formatDuration(intervalMs)}`,
     `retry=${formatDuration(retryMs)}`,
     noDriftCheck ? 'evidence drift=disabled' : `evidence drift=${formatDuration(driftCheckMs)}`,
+    `refresh request poll=${formatDuration(refreshRequestCheckMs)}`,
     noYolo ? 'codex yolo=disabled' : 'codex yolo=enabled',
     rerunOnPreviewChange ? 'preview fingerprint=enabled' : 'preview fingerprint=disabled',
   ].join(' '),
@@ -84,7 +92,7 @@ do {
   if (once || stopped) {
     break;
   }
-  await sleep(waitMs);
+  await sleepUntilNextCheck(waitMs);
 } while (!stopped);
 
 async function checkAndMaybeRun() {
@@ -190,6 +198,16 @@ async function generateBrief(status, reason) {
 
 async function fetchBriefStatus() {
   const response = await fetch(`${baseUrl}/api/workflow-brief`, {
+    headers: { 'cache-control': 'no-cache' },
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+  }
+  return response.json();
+}
+
+async function fetchRefreshRequest() {
+  const response = await fetch(`${baseUrl}/api/workflow-brief/refresh-request`, {
     headers: { 'cache-control': 'no-cache' },
   });
   if (!response.ok) {
@@ -408,6 +426,28 @@ function clearRefreshRequest(status) {
     rmSync(expandHome(path), { force: true });
   } catch (error) {
     console.error(`[brief:watch] failed to clear refresh request: ${errorMessage(error)}`);
+  }
+}
+
+async function sleepUntilNextCheck(waitMs) {
+  const deadline = Date.now() + waitMs;
+  while (!stopped) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return;
+    await sleep(Math.min(remainingMs, refreshRequestCheckMs));
+    if (stopped || Date.now() >= deadline) return;
+    if (await refreshRequestIsActive()) {
+      console.log('[brief:watch] refresh request detected; waking early');
+      return;
+    }
+  }
+}
+
+async function refreshRequestIsActive() {
+  try {
+    return Boolean((await fetchRefreshRequest())?.active);
+  } catch {
+    return false;
   }
 }
 
