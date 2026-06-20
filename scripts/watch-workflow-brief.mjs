@@ -181,6 +181,7 @@ async function generateBrief(status, reason) {
       console.error(`[brief:watch] generator exited with ${exitCode}`);
       return retryMs;
     }
+    clearRefreshRequest(status);
     return intervalMs;
   } finally {
     releaseLock(lock.path);
@@ -217,6 +218,8 @@ async function fetchEvidenceSnapshot() {
 
 function runReason(status) {
   if (force) return 'forced run requested';
+  const request = activeRefreshRequest(status);
+  if (request) return refreshRequestReason(request);
   if (status.status !== 'ready') {
     return `brief status is ${status.status}`;
   }
@@ -244,6 +247,7 @@ function shouldSkipStaleBrief(status) {
 function shouldRefreshUnchangedBrief(status, reason) {
   return (
     !force
+    && !activeRefreshRequest(status)
     && typeof status.path === 'string'
     && status.brief
     && (
@@ -261,6 +265,18 @@ function shouldCheckFreshEvidence(status) {
     && typeof status.path === 'string'
     && status.brief
   );
+}
+
+function activeRefreshRequest(status) {
+  const request = status?.automation?.refreshRequest;
+  return request?.active ? request : null;
+}
+
+function refreshRequestReason(request) {
+  const workflow = request.workflowId || request.title || request.handoffId;
+  return workflow
+    ? `refresh requested after handoff ${workflow}`
+    : 'refresh requested after handoff';
 }
 
 function evidenceChanged(decision) {
@@ -382,6 +398,17 @@ function lockIsStale(path) {
 
 function releaseLock(path) {
   rmSync(path, { force: true });
+}
+
+function clearRefreshRequest(status) {
+  if (dryRun) return;
+  const path = status?.automation?.refreshRequest?.path;
+  if (!path || typeof path !== 'string') return;
+  try {
+    rmSync(expandHome(path), { force: true });
+  } catch (error) {
+    console.error(`[brief:watch] failed to clear refresh request: ${errorMessage(error)}`);
+  }
 }
 
 function runGenerator() {

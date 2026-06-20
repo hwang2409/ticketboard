@@ -87,6 +87,13 @@ def workflow_lock_path(brief_path: Path) -> Path:
     return Path(f"{brief_path}.lock")
 
 
+def workflow_refresh_request_path(brief_path: Path) -> Path:
+    configured = os.environ.get("TICKETBOARD_WORKFLOW_REFRESH_REQUEST_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path(f"{brief_path}.refresh-request.json")
+
+
 def workflow_automation_status(brief_path: Path) -> dict[str, Any]:
     fingerprint_path = workflow_fingerprint_path(brief_path)
     fingerprint = read_json(fingerprint_path)
@@ -121,7 +128,56 @@ def workflow_automation_status(brief_path: Path) -> dict[str, Any]:
         "fingerprintUpdatedAt": fingerprint.get("updatedAt"),
         "evidenceFingerprint": fingerprint.get("evidenceFingerprint"),
         "snapshotPath": fingerprint.get("snapshotPath"),
+        "refreshRequest": workflow_refresh_request_status(brief_path),
     }
+
+
+def workflow_refresh_request_status(brief_path: Path) -> dict[str, Any]:
+    path = workflow_refresh_request_path(brief_path)
+    payload = read_json(path)
+    if not isinstance(payload, dict):
+        return {
+            "active": False,
+            "path": str(path),
+        }
+
+    requested_at = str(payload.get("requestedAt") or "")
+    requested_at_dt = parse_iso_datetime(requested_at)
+    age_seconds = (
+        max(0, int((datetime.now(UTC) - requested_at_dt).total_seconds()))
+        if requested_at_dt
+        else None
+    )
+    return {
+        "active": True,
+        "ageSeconds": age_seconds,
+        "handoffId": payload.get("handoffId"),
+        "kind": payload.get("kind"),
+        "path": str(path),
+        "prNumber": payload.get("prNumber"),
+        "reason": payload.get("reason"),
+        "requestedAt": requested_at or None,
+        "source": payload.get("source"),
+        "ticketId": payload.get("ticketId"),
+        "title": payload.get("title"),
+        "workflowId": payload.get("workflowId"),
+    }
+
+
+def request_workflow_brief_refresh(
+    settings: Settings,
+    payload: dict[str, Any],
+) -> Path:
+    path = workflow_refresh_request_path(workflow_brief_path(settings))
+    write_json(
+        path,
+        {
+            "version": WORKFLOW_BRIEF_VERSION,
+            "requestedAt": utc_now_iso(),
+            **payload,
+        },
+    )
+    return path
 
 
 def workflow_brief_status(
@@ -879,11 +935,20 @@ def brief_age_seconds(payload: dict[str, Any]) -> int | None:
     generated_at = payload.get("generatedAt")
     if not isinstance(generated_at, str):
         return None
-    try:
-        parsed = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
-    except ValueError:
+    parsed = parse_iso_datetime(generated_at)
+    if not parsed:
         return None
     return max(0, int(datetime.now(tz=UTC).timestamp() - parsed.timestamp()))
+
+
+def parse_iso_datetime(value: str) -> datetime | None:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 def brief_target_id(payload: dict[str, Any]) -> str | None:

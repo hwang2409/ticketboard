@@ -25,7 +25,7 @@ It is designed to answer one question quickly: **what should own focus, what can
 - Uses PR files and worktree status to flag shared code areas before running parallel lanes.
 - Offers a next-safe-lane action when one parallel Codex handoff is ready.
 - Tracks recent handoff outcomes so launched or resumed lanes show live, quiet, or cleared state in both the UI and Codex evidence.
-- Flags when a handoff is newer than the current brief, making it clear the watcher owes a refreshed plan.
+- Queues and flags a refreshed Codex plan whenever a workflow handoff is newer than the current brief.
 - Checks for evidence drift while a brief is still fresh, so PR merges, check changes, handoffs, or planning-doc edits can trigger a new Codex plan before the 10-minute cadence expires.
 - Gives Codex read-only GitHub, Linear, git, and tmux verification hints so missing API keys do not block source-of-truth checks.
 - Shows brief freshness, watcher cadence, lock state, and last evidence fingerprint.
@@ -99,6 +99,7 @@ Create `.env` from `.env.example` when you want local overrides. The defaults ar
 | `TICKETBOARD_WORKFLOW_BRIEF_PATH` | JSON file written by local Codex and read by the app. |
 | `TICKETBOARD_WORKFLOW_SNAPSHOT_PATH` | Evidence snapshot written by Ticketboard for Codex. |
 | `TICKETBOARD_WORKFLOW_FINGERPRINT_PATH` | Optional sidecar path for the last evidence fingerprint used by Codex automation. |
+| `TICKETBOARD_WORKFLOW_REFRESH_REQUEST_PATH` | Optional marker path for handoff-triggered brief refresh requests. |
 | `TICKETBOARD_WORKFLOW_BRIEF_TTL` | How long a generated brief is treated as fresh, in seconds. |
 | `TICKETBOARD_WORKFLOW_AUTOMATION_INTERVAL_MS` | Brief watcher cadence. Defaults to 10 minutes. |
 | `TICKETBOARD_WORKFLOW_DRIFT_CHECK_MS` | Fresh-brief evidence drift check cadence. Defaults to 1 minute. |

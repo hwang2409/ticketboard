@@ -1245,7 +1245,8 @@ function WorkflowAutomationPanel({
       : 'idle';
   const fingerprintStatus = automation?.fingerprintStatus ?? 'none';
   const pendingHandoff = latestHandoffAfterBrief(handoffs, status);
-  const briefRefreshOwed = Boolean(pendingHandoff);
+  const queuedRefreshRequest = activeBriefRefreshRequest(status);
+  const briefRefreshOwed = Boolean(pendingHandoff || queuedRefreshRequest);
 
   return (
     <section
@@ -1268,7 +1269,14 @@ function WorkflowAutomationPanel({
           <strong>
             {briefStatusLabel(status.status)} / {lockStateLabel(lockState)}
           </strong>
-          <em>{briefAutomationSummary(status, remainingSeconds, pendingHandoff)}</em>
+          <em>
+            {briefAutomationSummary(
+              status,
+              remainingSeconds,
+              pendingHandoff,
+              queuedRefreshRequest,
+            )}
+          </em>
         </p>
       </div>
       <div className="automation-facts">
@@ -1285,10 +1293,18 @@ function WorkflowAutomationPanel({
           <em>watch cadence</em>
         </span>
         <span>
-          <b>{briefRefreshOwed ? 'owed' : fingerprintStatusLabel(fingerprintStatus)}</b>
+          <b>
+            {queuedRefreshRequest
+              ? 'queued'
+              : briefRefreshOwed
+                ? 'owed'
+                : fingerprintStatusLabel(fingerprintStatus)}
+          </b>
           <em>
-            {pendingHandoff
-              ? `${handoffKindLabel(pendingHandoff.kind)} ${formatRelativeTime(pendingHandoff.ranAt)}`
+            {queuedRefreshRequest
+              ? `request ${formatRelativeTime(queuedRefreshRequest.requestedAt ?? '')}`
+              : pendingHandoff
+                ? `${handoffKindLabel(pendingHandoff.kind)} ${formatRelativeTime(pendingHandoff.ranAt)}`
               : shortFingerprint(automation?.evidenceFingerprint ?? null)}
           </em>
         </span>
@@ -1322,9 +1338,14 @@ function briefAutomationSummary(
   status: WorkflowBriefResponse,
   remainingSeconds: number | null,
   pendingHandoff: HandoffEvent | null,
+  refreshRequest: ActiveBriefRefreshRequest | null,
 ) {
   if (status.automation?.lockActive) {
     return 'A Codex generator lock is active, so another watcher should wait.';
+  }
+  if (refreshRequest) {
+    const target = refreshRequest.workflowId || refreshRequest.title || 'the latest handoff';
+    return `A Codex brief refresh is queued for ${target}; the watcher should run it before normal cadence.`;
   }
   if (pendingHandoff) {
     return `A ${handoffKindLabel(pendingHandoff.kind).toLowerCase()} handoff landed after this brief; the watcher should regenerate from that new evidence.`;
@@ -1341,6 +1362,19 @@ function briefAutomationSummary(
     return status.reason ?? 'The next watcher pass should regenerate the brief.';
   }
   return 'Start pnpm brief:watch or run pnpm brief:codex to generate the first brief.';
+}
+
+type ActiveBriefRefreshRequest = NonNullable<
+  NonNullable<WorkflowBriefResponse['automation']>['refreshRequest']
+> & {
+  active: true;
+};
+
+function activeBriefRefreshRequest(
+  status: WorkflowBriefResponse,
+): ActiveBriefRefreshRequest | null {
+  const request = status.automation?.refreshRequest;
+  return request?.active ? { ...request, active: true } : null;
 }
 
 function latestHandoffAfterBrief(

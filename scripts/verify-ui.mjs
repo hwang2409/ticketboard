@@ -466,7 +466,15 @@ async function verifyUserStateApi(page) {
 }
 
 async function verifyCopyAction({ button, expected, page }) {
-  await button.click();
+  await button.waitFor({ state: 'visible', timeout: 10_000 });
+  const disabled = await button.evaluate((element) => element.disabled === true);
+  if (disabled) {
+    throw new Error('Expected copy button to be enabled');
+  }
+  await button.evaluate((element) => {
+    element.scrollIntoView({ block: 'center', inline: 'center' });
+    element.click();
+  });
   const handle = await button.elementHandle();
   if (!handle) {
     throw new Error('Expected copy button to exist');
@@ -732,6 +740,15 @@ function validateWorkflowBriefShape(response) {
     !Number.isFinite(response.automation.intervalSeconds)
   ) {
     throw new Error('Expected workflow brief response automation status');
+  }
+  const refreshRequest = response.automation.refreshRequest;
+  if (
+    !refreshRequest ||
+    typeof refreshRequest !== 'object' ||
+    typeof refreshRequest.active !== 'boolean' ||
+    typeof refreshRequest.path !== 'string'
+  ) {
+    throw new Error('Expected workflow brief automation to expose refresh request status');
   }
   if (response.status === 'ready') {
     const brief = response.brief;

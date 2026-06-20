@@ -44,6 +44,7 @@ from .collectors import (
 from .store import initialize_cache_database
 from .workflow_brief import (
     build_workflow_evidence_snapshot,
+    request_workflow_brief_refresh,
     save_workflow_evidence_snapshot,
     workflow_brief_path,
     workflow_brief_status,
@@ -787,6 +788,19 @@ def record_workflow_handoff(payload: dict[str, Any], result: dict[str, Any]) -> 
     ]
     state["handoffs"] = [entry, *previous][:MAX_HANDOFF_EVENTS]
     save_json(user_state_path(), state)
+    request_workflow_brief_refresh(
+        settings,
+        {
+            "handoffId": entry["id"],
+            "kind": kind,
+            "prNumber": pr_number,
+            "reason": "Workflow action recorded a new handoff.",
+            "source": "workflow-action",
+            "ticketId": ticket_id,
+            "title": title,
+            "workflowId": workflow_id,
+        },
+    )
 
 
 @app.post("/api/workflow-action")
