@@ -25,6 +25,7 @@ It is designed to answer one question quickly: **what should own focus, what can
 - Uses PR files and worktree status to flag shared code areas before running parallel lanes.
 - Offers a next-safe-lane action when one parallel Codex handoff is ready.
 - Tracks recent handoff outcomes so launched or resumed lanes show live, quiet, or cleared state in both the UI and Codex evidence.
+- Checks for evidence drift while a brief is still fresh, so PR merges, check changes, handoffs, or planning-doc edits can trigger a new Codex plan before the 10-minute cadence expires.
 - Shows brief freshness, watcher cadence, lock state, and last evidence fingerprint.
 - Explains the selected move with evidence, latest signal, terminal context, and finish criteria.
 - Can focus an existing tmux lane, create a worktree, resume Codex, open a PR, or launch a new Codex lane.
@@ -73,7 +74,7 @@ Run the guarded automation loop in a separate terminal or tmux lane:
 pnpm brief:watch
 ```
 
-`brief:watch` checks the current brief status, skips work while the brief is fresh, and runs one generator at a time using a local lock file. When a brief is stale only because of age, the watcher compares a stable evidence fingerprint first; if nothing meaningful changed, it refreshes the existing brief without starting another Codex process. The generator uses non-interactive `codex exec` with JSON output and terminal color disabled; when `make dev` backgrounds the watcher, the generator gives Codex `/dev/tty` for stdin when available instead of Make's detached stdin. The default cadence is roughly 10 minutes. Use `--once` for a single check, `--force` to ignore freshness/fingerprints, `--rerun-on-preview-change` to include tmux pane previews in the fingerprint, or `--no-yolo` if you need Codex to ask for approvals.
+`brief:watch` checks the current brief status, skips work while the brief is fresh, and runs one generator at a time using a local lock file. While a brief is fresh, it compares the current evidence fingerprint about once per minute; if PRs, checks, handoffs, local lanes, or planning docs changed, it regenerates immediately instead of waiting for the 10-minute cadence. When a brief is stale only because of age, the watcher compares a stable evidence fingerprint first; if nothing meaningful changed, it refreshes the existing brief without starting another Codex process. The generator uses non-interactive `codex exec` with JSON output and terminal color disabled; when `make dev` backgrounds the watcher, the generator gives Codex `/dev/tty` for stdin when available instead of Make's detached stdin. The default Codex cadence is roughly 10 minutes, with drift checks every minute. Use `--once` for a single check, `--force` to ignore freshness/fingerprints, `--no-drift-check` to disable fresh-brief fingerprint checks, `--rerun-on-preview-change` to include tmux pane previews in the fingerprint, or `--no-yolo` if you need Codex to ask for approvals.
 
 The generated brief is written to `TICKETBOARD_WORKFLOW_BRIEF_PATH`, then read by the dashboard on refresh. `TICKETBOARD_PLAN_DOC_PATH`, `TICKETBOARD_PLAN_DOC_PATHS`, and `TICKETBOARD_PLAN_DOC_GLOBS` are optional; when set, Ticketboard adds those local planning documents plus extracted done/current/next/blocked signals to the Codex evidence snapshot, but the app does not hardcode any specific plan file.
 
@@ -98,6 +99,7 @@ Create `.env` from `.env.example` when you want local overrides. The defaults ar
 | `TICKETBOARD_WORKFLOW_FINGERPRINT_PATH` | Optional sidecar path for the last evidence fingerprint used by Codex automation. |
 | `TICKETBOARD_WORKFLOW_BRIEF_TTL` | How long a generated brief is treated as fresh, in seconds. |
 | `TICKETBOARD_WORKFLOW_AUTOMATION_INTERVAL_MS` | Brief watcher cadence. Defaults to 10 minutes. |
+| `TICKETBOARD_WORKFLOW_DRIFT_CHECK_MS` | Fresh-brief evidence drift check cadence. Defaults to 1 minute. |
 | `TICKETBOARD_WORKFLOW_AUTOMATION_RETRY_MS` | Retry delay after status/generation failures. |
 | `TICKETBOARD_WORKFLOW_LOCK_TTL_MS` | When an abandoned watcher lock can be replaced. |
 | `TICKETBOARD_CODEX_BIN` | Codex executable used by brief generation. Defaults to `codex`. |

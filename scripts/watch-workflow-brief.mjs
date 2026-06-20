@@ -16,6 +16,7 @@ import { fileURLToPath, URL } from 'node:url';
 
 const DEFAULT_INTERVAL_MS = 10 * 60 * 1000;
 const DEFAULT_RETRY_MS = 60 * 1000;
+const DEFAULT_DRIFT_CHECK_MS = 60 * 1000;
 const DEFAULT_LOCK_TTL_MS = 30 * 60 * 1000;
 
 const rawArgs = process.argv.slice(2);
@@ -38,6 +39,12 @@ const retryMs = readMs(
   DEFAULT_RETRY_MS,
   10 * 1000,
 );
+const driftCheckMs = readMs(
+  '--drift-check-ms=',
+  'TICKETBOARD_WORKFLOW_DRIFT_CHECK_MS',
+  DEFAULT_DRIFT_CHECK_MS,
+  30 * 1000,
+);
 const lockTtlMs = readMs(
   '--lock-ttl-ms=',
   'TICKETBOARD_WORKFLOW_LOCK_TTL_MS',
@@ -48,6 +55,7 @@ const once = args.has('--once');
 const force = args.has('--force');
 const dryRun = args.has('--dry-run');
 const noYolo = args.has('--no-yolo');
+const noDriftCheck = args.has('--no-drift-check');
 const rerunOnPreviewChange = args.has('--rerun-on-preview-change');
 const generatorScript = fileURLToPath(
   new URL('./generate-workflow-brief.mjs', import.meta.url),
@@ -65,6 +73,7 @@ console.log(
     `[brief:watch] watching ${baseUrl}`,
     `interval=${formatDuration(intervalMs)}`,
     `retry=${formatDuration(retryMs)}`,
+    noDriftCheck ? 'evidence drift=disabled' : `evidence drift=${formatDuration(driftCheckMs)}`,
     noYolo ? 'codex yolo=disabled' : 'codex yolo=enabled',
     rerunOnPreviewChange ? 'preview fingerprint=enabled' : 'preview fingerprint=disabled',
   ].join(' '),
@@ -89,18 +98,36 @@ async function checkAndMaybeRun() {
 
   const reason = runReason(status);
   if (!reason) {
+    if (shouldCheckFreshEvidence(status)) {
+      const decision = await unchangedEvidenceDecision(status);
+      if (evidenceChanged(decision)) {
+        console.log(
+          `[brief:watch] evidence changed (${shortHash(decision.previousFingerprint)} -> ${shortHash(decision.evidenceFingerprint)})`,
+        );
+        return generateBrief(status, 'fresh brief evidence changed');
+      }
+      if (decision.unchanged) {
+        const ageSeconds = Number(status.ageSeconds ?? 0);
+        const waitMs = freshBriefWaitMs(ageSeconds, driftCheckMs);
+        console.log(
+          `[brief:watch] brief is fresh (${formatDuration(ageSeconds * 1000)} old), evidence unchanged (${shortHash(decision.evidenceFingerprint)}); next drift check in ${formatDuration(waitMs)}`,
+        );
+        return waitMs;
+      }
+      if (decision.failed) {
+        return retryMs;
+      }
+    }
+
     const ageSeconds = Number(status.ageSeconds ?? 0);
-    const waitMs = Math.max(
-      retryMs,
-      Math.min(intervalMs, intervalMs - ageSeconds * 1000),
-    );
+    const waitMs = freshBriefWaitMs(ageSeconds, intervalMs);
     console.log(
       `[brief:watch] brief is fresh (${formatDuration(ageSeconds * 1000)} old); next check in ${formatDuration(waitMs)}`,
     );
     return waitMs;
   }
 
-  if (shouldSkipStaleBrief(status)) {
+  if (shouldRefreshUnchangedBrief(status, reason)) {
     const decision = await unchangedEvidenceDecision(status);
     if (decision.unchanged) {
       if (dryRun) {
@@ -136,6 +163,10 @@ async function checkAndMaybeRun() {
     }
   }
 
+  return generateBrief(status, reason);
+}
+
+async function generateBrief(status, reason) {
   const lockPath = lockPathFor(status);
   const lock = acquireLock(lockPath);
   if (!lock.acquired) {
@@ -210,6 +241,44 @@ function shouldSkipStaleBrief(status) {
   );
 }
 
+function shouldRefreshUnchangedBrief(status, reason) {
+  return (
+    !force
+    && typeof status.path === 'string'
+    && status.brief
+    && (
+      shouldSkipStaleBrief(status)
+      || reason.startsWith('brief is ')
+    )
+  );
+}
+
+function shouldCheckFreshEvidence(status) {
+  return (
+    !force
+    && !noDriftCheck
+    && status.status === 'ready'
+    && typeof status.path === 'string'
+    && status.brief
+  );
+}
+
+function evidenceChanged(decision) {
+  return Boolean(
+    decision.evidenceFingerprint
+    && decision.previousFingerprint
+    && decision.evidenceFingerprint !== decision.previousFingerprint,
+  );
+}
+
+function freshBriefWaitMs(ageSeconds, capMs) {
+  const minWaitMs = Math.min(retryMs, capMs);
+  return Math.max(
+    minWaitMs,
+    Math.min(capMs, intervalMs - ageSeconds * 1000),
+  );
+}
+
 async function unchangedEvidenceDecision(status) {
   try {
     const payload = await fetchEvidenceSnapshot();
@@ -230,7 +299,7 @@ async function unchangedEvidenceDecision(status) {
     };
   } catch (error) {
     console.error(`[brief:watch] evidence fingerprint check failed: ${errorMessage(error)}`);
-    return { unchanged: false };
+    return { failed: true, unchanged: false };
   }
 }
 
