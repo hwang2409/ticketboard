@@ -722,14 +722,26 @@ function validateWorkflowBriefShape(response) {
 }
 
 function validateWorkflowEvidenceShape(response) {
+  const recentHandoffs = response?.snapshot?.recentHandoffs;
   if (
     !response ||
     typeof response !== 'object' ||
     typeof response.path !== 'string' ||
     typeof response.fingerprint !== 'string' ||
-    !Array.isArray(response.snapshot?.recentHandoffs)
+    !Array.isArray(recentHandoffs)
   ) {
     throw new Error('Expected workflow evidence snapshot to include recent handoffs');
+  }
+  for (const [index, handoff] of recentHandoffs.entries()) {
+    if (
+      !handoff ||
+      typeof handoff !== 'object' ||
+      typeof handoff.outcome?.label !== 'string' ||
+      typeof handoff.outcome?.detail !== 'string' ||
+      typeof handoff.outcome?.tone !== 'string'
+    ) {
+      throw new Error(`Expected recent handoff ${index} to include current outcome`);
+    }
   }
 }
 

@@ -287,7 +287,10 @@ def build_workflow_evidence_snapshot(
             }
             for session in dashboard.get("codexSessions", [])
         ],
-        "recentHandoffs": summarize_recent_handoffs(recent_handoffs or []),
+        "recentHandoffs": summarize_recent_handoffs(
+            recent_handoffs or [],
+            dashboard,
+        ),
         "diagnostics": dashboard.get("diagnostics", []),
         "planDoc": plan_doc,
         "instructions": {
@@ -306,7 +309,10 @@ def build_workflow_evidence_snapshot(
     return snapshot
 
 
-def summarize_recent_handoffs(handoffs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def summarize_recent_handoffs(
+    handoffs: list[dict[str, Any]],
+    dashboard: dict[str, Any],
+) -> list[dict[str, Any]]:
     summarized = []
     for item in handoffs[:10]:
         if not isinstance(item, dict):
@@ -321,9 +327,230 @@ def summarize_recent_handoffs(handoffs: list[dict[str, Any]]) -> list[dict[str, 
                 "prNumber": item.get("prNumber"),
                 "message": item.get("message"),
                 "ranAt": item.get("ranAt"),
+                "outcome": handoff_outcome(item, dashboard),
             },
         )
     return summarized
+
+
+def handoff_outcome(item: dict[str, Any], dashboard: dict[str, Any]) -> dict[str, Any]:
+    workflow_id = str(item.get("workflowId") or "")
+    if workflow_id.startswith("ticket:"):
+        ticket_id = workflow_id.removeprefix("ticket:")
+        return ticket_handoff_outcome(ticket_id, dashboard)
+    if workflow_id.startswith("pr:"):
+        return pr_handoff_outcome(workflow_id.removeprefix("pr:"), dashboard)
+    if workflow_id.startswith("session:"):
+        return session_handoff_outcome(workflow_id.removeprefix("session:"), dashboard)
+    if workflow_id.startswith("worktree:"):
+        return worktree_handoff_outcome(workflow_id.removeprefix("worktree:"), dashboard)
+
+    ticket_id = str(item.get("ticketId") or "")
+    if ticket_id:
+        return ticket_handoff_outcome(ticket_id, dashboard)
+    pr_number = item.get("prNumber")
+    if isinstance(pr_number, int):
+        return pr_handoff_outcome(str(pr_number), dashboard)
+    return cleared_handoff_outcome()
+
+
+def ticket_handoff_outcome(ticket_id: str, dashboard: dict[str, Any]) -> dict[str, Any]:
+    ticket = next(
+        (
+            row
+            for row in dashboard.get("tickets", [])
+            if isinstance(row, dict) and row.get("ticketId") == ticket_id
+        ),
+        None,
+    )
+    sessions = dashboard_items_for_ticket(dashboard, "codexSessions", ticket_id)
+    windows = dashboard_items_for_ticket(dashboard, "tmuxWindows", ticket_id)
+    worktrees = dashboard_items_for_ticket(dashboard, "worktrees", ticket_id)
+    prs = dashboard_items_for_ticket(dashboard, "prs", ticket_id)
+    return target_handoff_outcome(
+        target_name=ticket_id,
+        ticket=ticket,
+        prs=prs,
+        sessions=sessions,
+        windows=windows,
+        worktrees=worktrees,
+    )
+
+
+def pr_handoff_outcome(pr_number: str, dashboard: dict[str, Any]) -> dict[str, Any]:
+    pr = next(
+        (
+            item
+            for item in dashboard.get("prs", [])
+            if isinstance(item, dict) and str(item.get("number")) == pr_number
+        ),
+        None,
+    )
+    if not pr:
+        return cleared_handoff_outcome()
+
+    ticket_ids = [
+        ticket_id
+        for ticket_id in pr.get("ticketIds", [])
+        if isinstance(ticket_id, str) and ticket_id
+    ]
+    sessions = dashboard_items_for_any_ticket(dashboard, "codexSessions", ticket_ids)
+    windows = dashboard_items_for_any_ticket(dashboard, "tmuxWindows", ticket_ids)
+    worktrees = dashboard_items_for_any_ticket(dashboard, "worktrees", ticket_ids)
+    return target_handoff_outcome(
+        target_name=f"PR #{pr_number}",
+        ticket=None,
+        prs=[pr],
+        sessions=sessions,
+        windows=windows,
+        worktrees=worktrees,
+    )
+
+
+def session_handoff_outcome(thread_id: str, dashboard: dict[str, Any]) -> dict[str, Any]:
+    session = next(
+        (
+            item
+            for item in dashboard.get("codexSessions", [])
+            if isinstance(item, dict) and item.get("threadId") == thread_id
+        ),
+        None,
+    )
+    if not session:
+        return cleared_handoff_outcome()
+    if is_active_codex_session(session):
+        return {
+            "detail": "The Codex session is still active.",
+            "label": "Live",
+            "tone": "live",
+        }
+    return {
+        "detail": "The Codex session is visible but idle.",
+        "label": "Idle",
+        "tone": "quiet",
+    }
+
+
+def worktree_handoff_outcome(path: str, dashboard: dict[str, Any]) -> dict[str, Any]:
+    worktree = next(
+        (
+            item
+            for item in dashboard.get("worktrees", [])
+            if isinstance(item, dict) and item.get("path") == path
+        ),
+        None,
+    )
+    if not worktree:
+        return cleared_handoff_outcome()
+    if (worktree.get("dirtyCount") or 0) > 0:
+        return {
+            "detail": "The worktree still has local changes.",
+            "label": "Still dirty",
+            "tone": "live",
+        }
+    return {
+        "detail": "The worktree is visible and clean.",
+        "label": "Clean",
+        "tone": "quiet",
+    }
+
+
+def target_handoff_outcome(
+    *,
+    target_name: str,
+    ticket: dict[str, Any] | None,
+    prs: list[dict[str, Any]],
+    sessions: list[dict[str, Any]],
+    windows: list[dict[str, Any]],
+    worktrees: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if any(is_active_codex_session(session) for session in sessions):
+        return {
+            "detail": f"Codex is still active for {target_name}.",
+            "label": "Live",
+            "tone": "live",
+        }
+    if windows:
+        return {
+            "detail": f"A tmux lane is still open for {target_name}.",
+            "label": "Live",
+            "tone": "live",
+        }
+    if any((worktree.get("dirtyCount") or 0) > 0 for worktree in worktrees):
+        return {
+            "detail": f"Local changes still exist for {target_name}.",
+            "label": "Still dirty",
+            "tone": "live",
+        }
+    if any(pr_check_state(pr) == "red" for pr in prs):
+        return {
+            "detail": f"{target_name} still has failing PR checks.",
+            "label": "Checks failing",
+            "tone": "live",
+        }
+    if any(pr_check_state(pr) == "pending" for pr in prs):
+        return {
+            "detail": f"{target_name} still has pending PR checks.",
+            "label": "Checks pending",
+            "tone": "quiet",
+        }
+    if ticket:
+        next_action = ticket.get("nextAction") or "No immediate action."
+        return {
+            "detail": f"{target_name} is still visible: {next_action}",
+            "label": str(ticket.get("state") or "Visible").title(),
+            "tone": "quiet",
+        }
+    if prs:
+        return {
+            "detail": f"{target_name} is still visible.",
+            "label": "Visible",
+            "tone": "quiet",
+        }
+    return cleared_handoff_outcome()
+
+
+def cleared_handoff_outcome() -> dict[str, Any]:
+    return {
+        "detail": "The handed-off workflow no longer appears in the active board.",
+        "label": "Cleared",
+        "tone": "cleared",
+    }
+
+
+def dashboard_items_for_ticket(
+    dashboard: dict[str, Any],
+    key: str,
+    ticket_id: str,
+) -> list[dict[str, Any]]:
+    return dashboard_items_for_any_ticket(dashboard, key, [ticket_id])
+
+
+def dashboard_items_for_any_ticket(
+    dashboard: dict[str, Any],
+    key: str,
+    ticket_ids: list[str],
+) -> list[dict[str, Any]]:
+    wanted = set(ticket_ids)
+    if not wanted:
+        return []
+    return [
+        item
+        for item in dashboard.get(key, [])
+        if isinstance(item, dict)
+        and any(ticket_id in wanted for ticket_id in item.get("ticketIds", []))
+    ]
+
+
+def is_active_codex_session(session: dict[str, Any]) -> bool:
+    return session.get("status") in {"goal-active", "running"}
+
+
+def pr_check_state(pr: dict[str, Any]) -> str:
+    check_summary = pr.get("checkSummary")
+    if not isinstance(check_summary, dict):
+        return "unknown"
+    return str(check_summary.get("state") or "unknown")
 
 
 def workflow_evidence_fingerprint(

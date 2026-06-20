@@ -20,7 +20,7 @@ It is designed to answer one question quickly: **what should own focus, what can
 - Copies a safe-batch packet with run-now lanes, decision trail, and guardrails.
 - Guards Codex lane actions when focus safety is unknown, files overlap, or lane capacity is full.
 - Offers a next-safe-lane action when one parallel Codex handoff is ready.
-- Tracks recent handoff outcomes so launched or resumed lanes show live, quiet, or cleared state.
+- Tracks recent handoff outcomes so launched or resumed lanes show live, quiet, or cleared state in both the UI and Codex evidence.
 - Shows brief freshness, watcher cadence, lock state, and last evidence fingerprint.
 - Explains the selected move with evidence, latest signal, terminal context, and finish criteria.
 - Can focus an existing tmux lane, create a worktree, resume Codex, open a PR, or launch a new Codex lane.
