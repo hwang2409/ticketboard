@@ -109,6 +109,7 @@ async function verifyViewport({ width, height, screenshot }) {
         '# Ticketboard live plan packet',
         '## Live plan',
         '## Project pulse',
+        '## After focus clears',
         '## Parallel lanes',
         '## Guardrails',
       ],
@@ -137,6 +138,10 @@ async function verifyViewport({ width, height, screenshot }) {
       throw new Error('Expected recent handoffs to expose current outcomes');
     }
     await page.waitForSelector('[data-unlock-map]', { timeout: 10_000 });
+    await page.waitForSelector('[data-completion-forecast]', { timeout: 10_000 });
+    if ((await page.locator('[data-completion-forecast-item]').count()) < 1) {
+      throw new Error('Expected selected workflow to expose after-focus forecast moves');
+    }
     const hasUnlockSource =
       dashboard.tickets.some((ticket) => ticket.state === 'blocked') ||
       dashboard.prs.some((pr) => ['red', 'pending', 'green'].includes(pr.checkSummary?.state)) ||

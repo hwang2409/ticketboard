@@ -12,6 +12,7 @@ It is designed to answer one question quickly: **what should own focus, what can
 
 - Picks one current workflow from live local and remote signals.
 - Maps Linear blockers and PR gates into an unlock order.
+- Forecasts what finishing the focused lane should unlock or queue next.
 - Groups active work by Linear project so project pressure is visible before lane detail.
 - Shows current Codex, terminal, and dirty worktree lane load against the planned capacity.
 - Builds a lane plan for focus work, parallel Codex candidates, waiting checkpoints, and cleanup.

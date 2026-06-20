@@ -193,6 +193,20 @@ type UnlockMap = {
   summary: string;
 };
 
+type CompletionForecastItem = {
+  detail: string;
+  id: string;
+  meta: string;
+  title: string;
+  tone: UnlockTone;
+  workflowId: string | null;
+};
+
+type CompletionForecast = {
+  items: Array<CompletionForecastItem>;
+  summary: string;
+};
+
 type ProjectPulseItem = {
   activeCount: number;
   detail: string;
@@ -1322,6 +1336,8 @@ function ProjectPlanRail({
   const laneLoad = buildLaneLoad({ parallelPlan, workflows });
   const projectPulse = buildProjectPulse(workflows);
   const unlockMap = buildUnlockMap({ dashboard, workflows });
+  const selectedWorkflow =
+    workflows.find((workflow) => workflow.id === selectedWorkflowId) ?? null;
   const parallelBatch = parallelPlan
     ? parallelBatchFor({
         dashboard,
@@ -1331,7 +1347,15 @@ function ProjectPlanRail({
         workflows,
       })
     : null;
+  const completionForecast = buildCompletionForecast({
+    dashboard,
+    parallelBatch,
+    selectedWorkflow,
+    unlockMap,
+    workflows,
+  });
   const livePlanPacket = buildLivePlanPacket({
+    completionForecast,
     dashboard,
     handoffs,
     laneLoad,
@@ -1381,6 +1405,8 @@ function ProjectPlanRail({
       />
 
       <HandoffLedger handoffs={handoffs} onSelect={onSelect} workflows={workflows} />
+
+      <CompletionForecastPanel forecast={completionForecast} onSelect={onSelect} />
 
       <UnlockMapPanel
         onSelect={onSelect}
@@ -1729,6 +1755,58 @@ function UnlockMapPanel({
           )
         ) : (
           <p>No explicit Linear blockers or PR gates are visible.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function CompletionForecastPanel({
+  forecast,
+  onSelect,
+}: {
+  forecast: CompletionForecast;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <section className="completion-forecast" data-completion-forecast>
+      <div className="unlock-head">
+        <span className="section-kicker">After focus clears</span>
+        <small>{forecast.summary}</small>
+      </div>
+      <div className="unlock-list">
+        {forecast.items.length ? (
+          forecast.items.map((item) =>
+            item.workflowId ? (
+              <button
+                className={`unlock-item unlock-item-${item.tone}`}
+                data-completion-forecast-item={item.id}
+                key={item.id}
+                onClick={() => onSelect(item.workflowId as string)}
+                type="button"
+              >
+                <span>
+                  <strong>{item.title}</strong>
+                  <em>{item.detail}</em>
+                </span>
+                <small>{item.meta}</small>
+              </button>
+            ) : (
+              <span
+                className={`unlock-item unlock-item-${item.tone}`}
+                data-completion-forecast-item={item.id}
+                key={item.id}
+              >
+                <span>
+                  <strong>{item.title}</strong>
+                  <em>{item.detail}</em>
+                </span>
+                <small>{item.meta}</small>
+              </span>
+            ),
+          )
+        ) : (
+          <p>No follow-up is visible for the selected workflow.</p>
         )}
       </div>
     </section>
@@ -3445,6 +3523,173 @@ function buildUnlockMap({
   };
 }
 
+function buildCompletionForecast({
+  dashboard,
+  parallelBatch,
+  selectedWorkflow,
+  unlockMap,
+  workflows,
+}: {
+  dashboard: DashboardData;
+  parallelBatch: ParallelBatch | null;
+  selectedWorkflow: WorkflowItem | null;
+  unlockMap: UnlockMap;
+  workflows: Array<WorkflowItem>;
+}): CompletionForecast {
+  if (!selectedWorkflow) {
+    return {
+      items: [],
+      summary: 'Select a workflow',
+    };
+  }
+
+  const byTicket = workflowByTicketId(workflows);
+  const selectedTicketIds = workflowTicketIds(selectedWorkflow);
+  const items: Array<CompletionForecastItem> = [];
+  const seen = new Set<string>();
+  const add = (item: CompletionForecastItem) => {
+    if (seen.has(item.id)) return;
+    seen.add(item.id);
+    items.push(item);
+  };
+
+  for (const ticket of dashboard.linearTickets) {
+    for (const relation of ticket.relatedIssues) {
+      const edge = unlockEdgeFromRelation(ticket, relation);
+      if (!edge || !selectedTicketIds.has(edge.blocker.ticketId.toUpperCase())) {
+        continue;
+      }
+      const blockedWorkflow = byTicket.get(edge.blocked.ticketId.toUpperCase()) ?? null;
+      add({
+        detail: `${edge.blocked.ticketId} can move once ${edge.blocker.ticketId} is finished or handed off.`,
+        id: `forecast:linear:${edge.blocker.ticketId}:${edge.blocked.ticketId}`,
+        meta: relationLabel(edge.relationType),
+        title: `Unlock ${edge.blocked.ticketId}`,
+        tone: 'ready',
+        workflowId: blockedWorkflow?.id ?? null,
+      });
+    }
+  }
+
+  for (const pr of selectedWorkflow.prs) {
+    if (pr.checkSummary.state === 'green' && !pr.isDraft) {
+      add({
+        detail: pr.reviewDecision === 'CHANGES_REQUESTED'
+          ? 'Checks are green, but review changes still need a response.'
+          : 'After merge, refresh Ticketboard and clear any leftover local lane.',
+        id: `forecast:pr:${pr.number}:green`,
+        meta: pr.reviewDecision === 'APPROVED' ? 'Approved' : 'Green',
+        title: `Ship PR #${pr.number}`,
+        tone: pr.reviewDecision === 'CHANGES_REQUESTED' ? 'waiting' : 'ready',
+        workflowId: selectedWorkflow.id,
+      });
+    } else if (pr.checkSummary.state === 'red') {
+      add({
+        detail: `${moveCount(pr.checkSummary.failed, 'failing check')} must pass before this unlocks follow-up work.`,
+        id: `forecast:pr:${pr.number}:red`,
+        meta: 'Checks failing',
+        title: `Unblock PR #${pr.number}`,
+        tone: 'blocked',
+        workflowId: selectedWorkflow.id,
+      });
+    } else if (pr.checkSummary.state === 'pending') {
+      add({
+        detail: `${moveCount(pr.checkSummary.pending, 'pending check')} still needs a result before the lane can ship.`,
+        id: `forecast:pr:${pr.number}:pending`,
+        meta: 'Waiting',
+        title: `Watch PR #${pr.number}`,
+        tone: 'waiting',
+        workflowId: selectedWorkflow.id,
+      });
+    }
+  }
+
+  const readyDecision = parallelBatch?.decisions.find(
+    (decision) =>
+      decision.status === 'ready' &&
+      decision.workflowId &&
+      decision.workflowId !== selectedWorkflow.id,
+  );
+  if (readyDecision) {
+    add({
+      detail: readyDecision.reason,
+      id: `forecast:batch:${readyDecision.id}`,
+      meta: 'Parallel slot',
+      title: `Start ${readyDecision.label}`,
+      tone: 'ready',
+      workflowId: readyDecision.workflowId,
+    });
+  }
+
+  const directUnlock = unlockMap.items.find(
+    (item) => item.workflowId && item.workflowId !== selectedWorkflow.id,
+  );
+  if (directUnlock) {
+    add({
+      detail: directUnlock.detail,
+      id: `forecast:unlock:${directUnlock.id}`,
+      meta: directUnlock.meta,
+      title: directUnlock.title,
+      tone: directUnlock.tone,
+      workflowId: directUnlock.workflowId,
+    });
+  }
+
+  if (workflowHasLiveLane(selectedWorkflow)) {
+    add({
+      detail: 'After the handoff or merge, close stale tmux panes and clean or archive local changes.',
+      id: `forecast:cleanup:${selectedWorkflow.id}`,
+      meta: 'Cleanup',
+      title: 'Clear local residue',
+      tone: 'waiting',
+      workflowId: selectedWorkflow.id,
+    });
+  }
+
+  const nextWorkflow = workflows.find(
+    (workflow) =>
+      workflow.id !== selectedWorkflow.id &&
+      workflow.intent !== 'clean' &&
+      workflow.intent !== 'watch',
+  );
+  if (nextWorkflow) {
+    add({
+      detail: nextWorkflow.nextStep,
+      id: `forecast:next:${nextWorkflow.id}`,
+      meta: INTENT_LABELS[nextWorkflow.intent],
+      title: `Queue ${truncate(nextWorkflow.title, 42)}`,
+      tone: 'waiting',
+      workflowId: nextWorkflow.id,
+    });
+  }
+
+  const limited = items
+    .sort((left, right) => unlockToneRank(left.tone) - unlockToneRank(right.tone))
+    .slice(0, 4);
+
+  return {
+    items: limited,
+    summary: limited.length
+      ? `${moveCount(limited.length, 'move')} after focus`
+      : 'No follow-up visible',
+  };
+}
+
+function workflowTicketIds(workflow: WorkflowItem) {
+  const ticketIds = new Set<string>();
+  for (const ticketId of [
+    workflow.ticket?.ticketId,
+    workflow.linearTicket?.ticketId,
+    ...workflow.prs.flatMap((pr) => pr.ticketIds),
+    ...workflow.sessions.flatMap((session) => session.ticketIds),
+    ...workflow.worktrees.flatMap((worktree) => worktree.ticketIds),
+    ...workflow.windows.flatMap((window) => window.ticketIds),
+  ]) {
+    if (ticketId) ticketIds.add(ticketId.toUpperCase());
+  }
+  return ticketIds;
+}
+
 function workflowByTicketId(workflows: Array<WorkflowItem>) {
   const byTicket = new Map<string, WorkflowItem>();
   for (const workflow of workflows) {
@@ -4394,6 +4639,7 @@ function buildWorkflowPacket(workflow: WorkflowItem, dashboard: DashboardData) {
 }
 
 function buildLivePlanPacket({
+  completionForecast,
   dashboard,
   handoffs,
   laneLoad,
@@ -4404,6 +4650,7 @@ function buildLivePlanPacket({
   unlockMap,
   workflows,
 }: {
+  completionForecast: CompletionForecast;
   dashboard: DashboardData;
   handoffs: Array<HandoffEvent>;
   laneLoad: LaneLoad;
@@ -4443,6 +4690,13 @@ function buildLivePlanPacket({
     ...(unlockMap.items.length
       ? unlockMap.items.map((item) => `- ${item.title}: ${item.detail} (${item.meta})`)
       : ['- No explicit dependency blockers or PR gates are visible.']),
+    '',
+    '## After focus clears',
+    ...(completionForecast.items.length
+      ? completionForecast.items.map(
+          (item) => `- ${item.title}: ${item.detail} (${item.meta})`,
+        )
+      : ['- No follow-up is visible for the selected workflow.']),
     '',
     '## Parallel lanes',
     ...(parallelPlan
