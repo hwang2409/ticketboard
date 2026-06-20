@@ -305,6 +305,25 @@ type ParallelBatch = {
   title: string;
 };
 
+type LaneMatrixTone = 'blocked' | 'ready' | 'waiting';
+
+type LaneMatrixItem = {
+  detail: string;
+  id: string;
+  meta: string;
+  title: string;
+  tone: LaneMatrixTone;
+  workflowIds: Array<string>;
+};
+
+type LaneMatrix = {
+  blockedCount: number;
+  items: Array<LaneMatrixItem>;
+  readyCount: number;
+  summary: string;
+  waitingCount: number;
+};
+
 type CommandSummary = {
   description: string;
   status: string;
@@ -1347,6 +1366,9 @@ function ProjectPlanRail({
         workflows,
       })
     : null;
+  const laneMatrix = parallelPlan
+    ? buildLaneMatrix({ lanes: parallelPlan.lanes, workflows })
+    : emptyLaneMatrix();
   const completionForecast = buildCompletionForecast({
     dashboard,
     parallelBatch,
@@ -1358,6 +1380,7 @@ function ProjectPlanRail({
     completionForecast,
     dashboard,
     handoffs,
+    laneMatrix,
     laneLoad,
     parallelBatch,
     parallelPlan,
@@ -1398,6 +1421,8 @@ function ProjectPlanRail({
       />
 
       <ProjectPulsePanel onSelect={onSelect} pulse={projectPulse} />
+
+      <LaneMatrixPanel matrix={laneMatrix} onSelect={onSelect} />
 
       <LaneLoadPanel
         load={laneLoad}
@@ -1654,6 +1679,58 @@ function LaneLoadPanel({
           ))
         ) : (
           <p>No active Codex, terminal, or dirty local lanes are visible.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function LaneMatrixPanel({
+  matrix,
+  onSelect,
+}: {
+  matrix: LaneMatrix;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <section className="lane-matrix" data-lane-matrix>
+      <div className="lane-matrix-head">
+        <span className="section-kicker">Lane matrix</span>
+        <small>{matrix.summary}</small>
+      </div>
+      <div className="lane-matrix-facts">
+        <span>
+          <b>{matrix.readyCount}</b>
+          <em>together</em>
+        </span>
+        <span>
+          <b>{matrix.waitingCount}</b>
+          <em>guarded</em>
+        </span>
+        <span>
+          <b>{matrix.blockedCount}</b>
+          <em>serialized</em>
+        </span>
+      </div>
+      <div className="lane-matrix-list">
+        {matrix.items.length ? (
+          matrix.items.map((item) => (
+            <button
+              className={`lane-matrix-item lane-matrix-item-${item.tone}`}
+              data-lane-matrix-item={item.id}
+              key={item.id}
+              onClick={() => onSelect(item.workflowIds[0])}
+              type="button"
+            >
+              <span>
+                <strong>{item.title}</strong>
+                <em>{item.detail}</em>
+              </span>
+              <small>{item.meta}</small>
+            </button>
+          ))
+        ) : (
+          <p>Need at least two actionable lanes to compare.</p>
         )}
       </div>
     </section>
@@ -3051,6 +3128,140 @@ function parallelBatchFor({
       ? labels.join(' + ')
       : 'No lane is ready to run in parallel',
   };
+}
+
+function buildLaneMatrix({
+  lanes,
+  workflows,
+}: {
+  lanes: Array<ParallelLane>;
+  workflows: Array<WorkflowItem>;
+}): LaneMatrix {
+  const workflowById = new Map(workflows.map((workflow) => [workflow.id, workflow]));
+  const candidates = lanes
+    .filter((lane) =>
+      Boolean(lane.workflowId) &&
+      (lane.role === 'focus' || lane.role === 'parallel' || lane.role === 'cleanup'),
+    )
+    .slice(0, 5);
+  const items: Array<LaneMatrixItem> = [];
+
+  for (let leftIndex = 0; leftIndex < candidates.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < candidates.length; rightIndex += 1) {
+      const item = laneMatrixItem({
+        left: candidates[leftIndex],
+        right: candidates[rightIndex],
+        workflowById,
+      });
+      if (item) items.push(item);
+    }
+  }
+
+  const readyCount = items.filter((item) => item.tone === 'ready').length;
+  const waitingCount = items.filter((item) => item.tone === 'waiting').length;
+  const blockedCount = items.filter((item) => item.tone === 'blocked').length;
+  const visibleItems = items
+    .sort(
+      (left, right) =>
+        laneMatrixToneRank(left.tone) - laneMatrixToneRank(right.tone) ||
+        left.title.localeCompare(right.title),
+    )
+    .slice(0, 6);
+
+  return {
+    blockedCount,
+    items: visibleItems,
+    readyCount,
+    summary: items.length
+      ? `${moveCount(readyCount, 'pair')} can run together`
+      : 'No lane pairs visible',
+    waitingCount,
+  };
+}
+
+function emptyLaneMatrix(): LaneMatrix {
+  return {
+    blockedCount: 0,
+    items: [],
+    readyCount: 0,
+    summary: 'No lane pairs visible',
+    waitingCount: 0,
+  };
+}
+
+function laneMatrixItem({
+  left,
+  right,
+  workflowById,
+}: {
+  left: ParallelLane;
+  right: ParallelLane;
+  workflowById: Map<string, WorkflowItem>;
+}): LaneMatrixItem | null {
+  if (!left.workflowId || !right.workflowId) return null;
+  const leftWorkflow = workflowById.get(left.workflowId) ?? null;
+  const rightWorkflow = workflowById.get(right.workflowId) ?? null;
+  if (!leftWorkflow || !rightWorkflow) return null;
+
+  const leftPaths = changedPathsForLane(left, leftWorkflow);
+  const rightPaths = changedPathsForLane(right, rightWorkflow);
+  const overlap = intersectPaths(leftPaths, rightPaths);
+  const leftZones = changedPathZones(leftPaths);
+  const rightZones = changedPathZones(rightPaths);
+  const sharedZones = intersectPaths(leftZones, rightZones);
+  const title = `${matrixLaneLabel(left)} + ${matrixLaneLabel(right)}`;
+
+  if (overlap.length) {
+    return {
+      detail: `Serialize these lanes; both touch ${overlap.slice(0, 3).join(', ')}${overlap.length > 3 ? ', ...' : ''}.`,
+      id: `matrix:${left.id}:${right.id}`,
+      meta: 'File overlap',
+      title,
+      tone: 'blocked',
+      workflowIds: [left.workflowId, right.workflowId],
+    };
+  }
+
+  if (sharedZones.length) {
+    return {
+      detail: `Guard before parallel work; both lanes touch ${sharedZones.slice(0, 3).join(', ')}.`,
+      id: `matrix:${left.id}:${right.id}`,
+      meta: 'Same area',
+      title,
+      tone: 'waiting',
+      workflowIds: [left.workflowId, right.workflowId],
+    };
+  }
+
+  if (!leftPaths.length || !rightPaths.length) {
+    return {
+      detail: 'Changed-file evidence is missing for one or both lanes; verify before running together.',
+      id: `matrix:${left.id}:${right.id}`,
+      meta: 'Verify',
+      title,
+      tone: 'waiting',
+      workflowIds: [left.workflowId, right.workflowId],
+    };
+  }
+
+  return {
+    detail: `No changed-file overlap across ${moveCount(leftPaths.length + rightPaths.length, 'file')}.`,
+    id: `matrix:${left.id}:${right.id}`,
+    meta: 'Can run',
+    title,
+    tone: 'ready',
+    workflowIds: [left.workflowId, right.workflowId],
+  };
+}
+
+function matrixLaneLabel(lane: ParallelLane) {
+  return `${laneRoleLabel(lane.role)}: ${truncate(lane.title, 24)}`;
+}
+
+function laneMatrixToneRank(tone: LaneMatrixTone) {
+  if (tone === 'ready') return 0;
+  if (tone === 'waiting') return 1;
+  return 2;
 }
 
 function changedPathsForLane(
@@ -4642,6 +4853,7 @@ function buildLivePlanPacket({
   completionForecast,
   dashboard,
   handoffs,
+  laneMatrix,
   laneLoad,
   parallelBatch,
   parallelPlan,
@@ -4653,6 +4865,7 @@ function buildLivePlanPacket({
   completionForecast: CompletionForecast;
   dashboard: DashboardData;
   handoffs: Array<HandoffEvent>;
+  laneMatrix: LaneMatrix;
   laneLoad: LaneLoad;
   parallelBatch: ParallelBatch | null;
   parallelPlan: ParallelPlan | null;
@@ -4685,6 +4898,16 @@ function buildLivePlanPacket({
     ...(laneLoad.items.length
       ? laneLoad.items.map((item) => `- ${item.title}: ${item.detail} (${item.meta})`)
       : ['- No active local lanes are visible.']),
+    '',
+    '## Lane matrix',
+    ...(laneMatrix.items.length
+      ? [
+          `- ${moveCount(laneMatrix.readyCount, 'pair')} can run together; ${moveCount(laneMatrix.waitingCount, 'pair')} guarded; ${moveCount(laneMatrix.blockedCount, 'pair')} serialized`,
+          ...laneMatrix.items.map(
+            (item) => `- ${item.title}: ${item.detail} (${item.meta})`,
+          ),
+        ]
+      : ['- Need at least two actionable lanes to compare.']),
     '',
     '## Unlock map',
     ...(unlockMap.items.length

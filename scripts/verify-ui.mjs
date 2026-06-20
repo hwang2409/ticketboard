@@ -109,6 +109,7 @@ async function verifyViewport({ width, height, screenshot }) {
         '# Ticketboard live plan packet',
         '## Live plan',
         '## Project pulse',
+        '## Lane matrix',
         '## After focus clears',
         '## Parallel lanes',
         '## Guardrails',
@@ -129,6 +130,14 @@ async function verifyViewport({ width, height, screenshot }) {
       dashboard.worktrees.some((worktree) => (worktree.dirtyCount ?? 0) > 0 || worktree.prunable);
     if (hasLiveLane && (await page.locator('[data-lane-load-item]').count()) < 1) {
       throw new Error('Expected lane load panel to render active local lanes');
+    }
+    await page.waitForSelector('[data-lane-matrix]', { timeout: 10_000 });
+    if (
+      Array.isArray(workflowBrief.brief?.lanes) &&
+      workflowBrief.brief.lanes.length > 1 &&
+      (await page.locator('[data-lane-matrix-item]').count()) < 1
+    ) {
+      throw new Error('Expected lane matrix to render pairwise lane compatibility');
     }
     await page.waitForSelector('[data-handoff-ledger]', { timeout: 10_000 });
     if ((await page.locator('[data-handoff-item]').count()) < 1) {

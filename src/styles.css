@@ -1300,6 +1300,132 @@ button.plan-digest-item {
   border-left-color: var(--warning);
 }
 
+.lane-matrix {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--surface);
+}
+
+.lane-matrix-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.lane-matrix-head small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.lane-matrix-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid var(--border);
+  background: var(--surface-muted);
+}
+
+.lane-matrix-facts span {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
+  padding: 0.45rem 0.5rem;
+  border-right: 1px solid var(--border);
+}
+
+.lane-matrix-facts span:last-child {
+  border-right: 0;
+}
+
+.lane-matrix-facts b {
+  font-size: 0.86rem;
+  line-height: 1.15;
+}
+
+.lane-matrix-facts em {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-style: normal;
+  text-transform: uppercase;
+}
+
+.lane-matrix-list {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.lane-matrix-list > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.lane-matrix-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  align-items: start;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--warning);
+  background: var(--surface-muted);
+  color: var(--foreground);
+  cursor: pointer;
+  text-align: left;
+}
+
+.lane-matrix-item:hover,
+.lane-matrix-item:focus-visible {
+  border-color: var(--foreground);
+}
+
+.lane-matrix-item span {
+  display: grid;
+  min-width: 0;
+  gap: 0.18rem;
+}
+
+.lane-matrix-item strong,
+.lane-matrix-item em,
+.lane-matrix-item small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lane-matrix-item strong {
+  font-size: 0.78rem;
+}
+
+.lane-matrix-item em,
+.lane-matrix-item small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.lane-matrix-item small {
+  justify-self: end;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.lane-matrix-item-ready {
+  border-left-color: var(--green);
+}
+
+.lane-matrix-item-blocked {
+  border-left-color: var(--danger);
+}
+
 .handoff-ledger {
   display: grid;
   gap: 0.5rem;
@@ -2561,6 +2687,7 @@ button.plan-item {
   .parallel-head,
   .project-pulse-item,
   .lane-load-item,
+  .lane-matrix-item,
   .handoff-item,
   .unlock-item,
   .parallel-lane,
@@ -2590,27 +2717,33 @@ button.plan-item {
   }
 
   .project-pulse-head,
-  .lane-load-head {
+  .lane-load-head,
+  .lane-matrix-head {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .lane-load-facts {
+  .lane-load-facts,
+  .lane-matrix-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .lane-load-facts span:nth-child(2n) {
+  .lane-load-facts span:nth-child(2n),
+  .lane-matrix-facts span:nth-child(2n) {
     border-right: 0;
   }
 
-  .lane-load-facts span:nth-child(-n + 2) {
+  .lane-load-facts span:nth-child(-n + 2),
+  .lane-matrix-facts span:nth-child(-n + 2) {
     border-bottom: 1px solid var(--border);
   }
 
   .project-pulse-head small,
   .project-pulse-item small,
   .lane-load-head small,
-  .lane-load-item small {
+  .lane-load-item small,
+  .lane-matrix-head small,
+  .lane-matrix-item small {
     justify-self: start;
     text-align: left;
   }
