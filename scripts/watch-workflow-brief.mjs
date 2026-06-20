@@ -292,9 +292,12 @@ function activeRefreshRequest(status) {
 
 function refreshRequestReason(request) {
   const workflow = request.workflowId || request.title || request.handoffId;
+  const prefix = request.source === 'workflow-action'
+    ? 'after handoff'
+    : 'from manual request';
   return workflow
-    ? `refresh requested after handoff ${workflow}`
-    : 'refresh requested after handoff';
+    ? `refresh requested ${prefix} ${workflow}`
+    : `refresh requested ${prefix}`;
 }
 
 function evidenceChanged(decision) {

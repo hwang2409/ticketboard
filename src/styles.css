@@ -701,6 +701,13 @@ input:focus-visible {
   align-items: center;
 }
 
+.automation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
 .automation-head .ghost-button {
   min-height: 2rem;
   padding: 0.4rem 0.6rem;

@@ -436,6 +436,39 @@ export function App() {
     }
   }, []);
 
+  const queueWorkflowBriefRefresh = useCallback(
+    async (workflow: WorkflowItem | null) => {
+      try {
+        const response = await fetch('/api/workflow-brief/refresh-request', {
+          body: JSON.stringify({
+            kind: 'manual-refresh',
+            prNumber: workflow?.prs[0]?.number ?? null,
+            reason: workflow
+              ? `Manual Codex plan refresh requested from Ticketboard for ${workflow.title}.`
+              : 'Manual Codex plan refresh requested from Ticketboard.',
+            source: 'ticketboard-ui',
+            ticketId: workflow?.ticket?.ticketId ?? workflow?.linearTicket?.ticketId ?? null,
+            title: workflow?.title ?? 'Manual Codex plan refresh',
+            workflowId: workflow?.id ?? null,
+          }),
+          headers: { 'content-type': 'application/json' },
+          method: 'POST',
+        });
+        if (!response.ok) {
+          throw new Error(`Refresh request failed with ${response.status}`);
+        }
+        await refreshWorkflowBrief(false);
+      } catch (error) {
+        setBriefState((current) => ({
+          data: current.data,
+          error: error instanceof Error ? error.message : 'Unable to queue workflow brief refresh',
+          loading: false,
+        }));
+      }
+    },
+    [refreshWorkflowBrief],
+  );
+
   useEffect(() => {
     void refreshDashboard(false);
     void refreshWorkflowBrief(false);
@@ -667,6 +700,9 @@ export function App() {
               <PrimaryWorkflow
                 dashboard={dashboard}
                 handoffs={localState.handoffs}
+                onQueueBriefRefresh={() => {
+                  void queueWorkflowBriefRefresh(selectedWorkflow);
+                }}
                 onRefreshBrief={() => {
                   void refreshWorkflowBrief(true);
                 }}
@@ -979,6 +1015,7 @@ function PrimaryWorkflow({
   dashboard,
   handoffs,
   onActionComplete,
+  onQueueBriefRefresh,
   onRefreshBrief,
   onSkip,
   workflow,
@@ -988,6 +1025,7 @@ function PrimaryWorkflow({
   dashboard: DashboardData;
   handoffs: Array<HandoffEvent>;
   onActionComplete: (shouldAdvance: boolean) => void;
+  onQueueBriefRefresh: () => void;
   onRefreshBrief: () => void;
   onSkip: (workflow: WorkflowItem) => void;
   workflow: WorkflowItem;
@@ -1054,6 +1092,7 @@ function PrimaryWorkflow({
 
       <WorkflowAutomationPanel
         handoffs={handoffs}
+        onQueueRefresh={onQueueBriefRefresh}
         onRefresh={onRefreshBrief}
         status={workflowBriefStatus}
       />
@@ -1222,10 +1261,12 @@ function WorkflowBriefStatus({ status }: { status: WorkflowBriefResponse }) {
 
 function WorkflowAutomationPanel({
   handoffs,
+  onQueueRefresh,
   onRefresh,
   status,
 }: {
   handoffs: Array<HandoffEvent>;
+  onQueueRefresh: () => void;
   onRefresh: () => void;
   status: WorkflowBriefResponse | null;
 }) {
@@ -1258,10 +1299,22 @@ function WorkflowAutomationPanel({
     >
       <div className="automation-head">
         <span className="section-kicker">Brief automation</span>
-        <button className="ghost-button" onClick={onRefresh} type="button">
-          <RefreshCw aria-hidden="true" size={14} />
-          Refresh brief
-        </button>
+        <div className="automation-actions">
+          <button
+            className="ghost-button"
+            disabled={Boolean(queuedRefreshRequest || automation?.lockActive)}
+            onClick={onQueueRefresh}
+            type="button"
+            data-testid="queue-brief-refresh"
+          >
+            <Bot aria-hidden="true" size={14} />
+            {queuedRefreshRequest ? 'Plan queued' : 'Queue plan'}
+          </button>
+          <button className="ghost-button" onClick={onRefresh} type="button">
+            <RefreshCw aria-hidden="true" size={14} />
+            Refresh brief
+          </button>
+        </div>
       </div>
       <div className="automation-summary">
         <Bot aria-hidden="true" size={17} />

@@ -186,6 +186,9 @@ async function verifyViewport({ width, height, screenshot }) {
     if (!['false', 'true'].includes(refreshOwed)) {
       throw new Error(`Expected workflow automation panel to expose refresh-owed state, got ${refreshOwed}`);
     }
+    if ((await page.locator('[data-testid="queue-brief-refresh"]').count()) < 1) {
+      throw new Error('Expected workflow automation panel to expose a manual brief refresh queue control');
+    }
     if ((await page.locator('[data-testid="command-strip"] .metric-pill').count()) > 0) {
       throw new Error('Workflow command strip should not expose source-count metric pills');
     }

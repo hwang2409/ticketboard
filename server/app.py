@@ -423,6 +423,37 @@ async def api_workflow_refresh_request(request: Request) -> Response:
     )
 
 
+@app.post("/api/workflow-brief/refresh-request")
+async def api_workflow_refresh_request_create(
+    payload: dict[str, Any],
+    request: Request,
+) -> Response:
+    title = str(payload.get("title") or "Manual Codex plan refresh").strip()
+    workflow_id = str(payload.get("workflowId") or "").strip()
+    reason = str(payload.get("reason") or "Manual Codex plan refresh requested.").strip()
+    try:
+        pr_number = optional_pr_number(payload)
+    except Exception:
+        pr_number = None
+    await asyncio.to_thread(
+        request_workflow_brief_refresh,
+        settings,
+        {
+            "kind": str(payload.get("kind") or "manual-refresh").strip(),
+            "prNumber": pr_number,
+            "reason": reason[:240],
+            "source": str(payload.get("source") or "manual").strip()[:80],
+            "ticketId": optional_ticket_id(payload),
+            "title": title[:160],
+            "workflowId": workflow_id or None,
+        },
+    )
+    return json_response(
+        workflow_refresh_request_status(workflow_brief_path(settings)),
+        request=request,
+    )
+
+
 async def dashboard_for_brief(force: bool) -> dict[str, Any]:
     if force:
         await refresh_dashboard_cache()

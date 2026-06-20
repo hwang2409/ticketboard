@@ -26,6 +26,7 @@ It is designed to answer one question quickly: **what should own focus, what can
 - Offers a next-safe-lane action when one parallel Codex handoff is ready.
 - Tracks recent handoff outcomes so launched or resumed lanes show live, quiet, or cleared state in both the UI and Codex evidence.
 - Queues and flags a refreshed Codex plan whenever a workflow handoff is newer than the current brief.
+- Lets you manually queue a fresh Codex plan from the dashboard without running a terminal command.
 - Checks for evidence drift while a brief is still fresh, so PR merges, check changes, handoffs, or planning-doc edits can trigger a new Codex plan before the 10-minute cadence expires.
 - Gives Codex read-only GitHub, Linear, git, and tmux verification hints so missing API keys do not block source-of-truth checks.
 - Shows brief freshness, watcher cadence, lock state, and last evidence fingerprint.
