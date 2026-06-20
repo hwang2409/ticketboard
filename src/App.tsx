@@ -1313,6 +1313,27 @@ function ProjectPlanRail({
   workflows: Array<WorkflowItem>;
 }) {
   const laneLoad = buildLaneLoad({ parallelPlan, workflows });
+  const projectPulse = buildProjectPulse(workflows);
+  const unlockMap = buildUnlockMap({ dashboard, workflows });
+  const parallelBatch = parallelPlan
+    ? parallelBatchFor({
+        dashboard,
+        laneLoad,
+        lanes: parallelPlan.lanes,
+        recommendedActive: parallelPlan.recommendedActive,
+        workflows,
+      })
+    : null;
+  const livePlanPacket = buildLivePlanPacket({
+    dashboard,
+    handoffs,
+    laneLoad,
+    parallelBatch,
+    parallelPlan,
+    plan,
+    projectPulse,
+    unlockMap,
+  });
 
   return (
     <aside className="workflow-queue plan-rail" aria-label="Generated project plan" data-project-plan>
@@ -1322,11 +1343,20 @@ function ProjectPlanRail({
           <h2>What happens next</h2>
           <p>{plan.summary}</p>
         </div>
-        {hiddenCount ? (
-          <button className="restore-button" onClick={onRestoreSkipped} type="button">
-            Restore {hiddenCount}
-          </button>
-        ) : null}
+        <div className="queue-actions">
+          <CopyButton
+            className="ghost-button restore-button"
+            icon="packet"
+            label="Copy live plan"
+            text={livePlanPacket}
+            testId="copy-live-plan"
+          />
+          {hiddenCount ? (
+            <button className="restore-button" onClick={onRestoreSkipped} type="button">
+              Restore {hiddenCount}
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <PlanDigest
@@ -1335,7 +1365,7 @@ function ProjectPlanRail({
         selectedWorkflowId={selectedWorkflowId}
       />
 
-      <ProjectPulsePanel onSelect={onSelect} workflows={workflows} />
+      <ProjectPulsePanel onSelect={onSelect} pulse={projectPulse} />
 
       <LaneLoadPanel
         load={laneLoad}
@@ -1345,13 +1375,13 @@ function ProjectPlanRail({
       <HandoffLedger handoffs={handoffs} onSelect={onSelect} />
 
       <UnlockMapPanel
-        dashboard={dashboard}
         onSelect={onSelect}
-        workflows={workflows}
+        unlockMap={unlockMap}
       />
 
-      {parallelPlan ? (
+      {parallelPlan && parallelBatch ? (
         <ParallelLanesPanel
+          batch={parallelBatch}
           dashboard={dashboard}
           laneLoad={laneLoad}
           onActionComplete={onWorkflowActionComplete}
@@ -1504,13 +1534,11 @@ function PlanDigestItem({
 
 function ProjectPulsePanel({
   onSelect,
-  workflows,
+  pulse,
 }: {
   onSelect: (id: string) => void;
-  workflows: Array<WorkflowItem>;
+  pulse: ProjectPulse;
 }) {
-  const pulse = buildProjectPulse(workflows);
-
   return (
     <section className="project-pulse" data-project-pulse>
       <div className="project-pulse-head">
@@ -1636,16 +1664,12 @@ function HandoffLedger({
 }
 
 function UnlockMapPanel({
-  dashboard,
   onSelect,
-  workflows,
+  unlockMap,
 }: {
-  dashboard: DashboardData;
   onSelect: (id: string) => void;
-  workflows: Array<WorkflowItem>;
+  unlockMap: UnlockMap;
 }) {
-  const unlockMap = buildUnlockMap({ dashboard, workflows });
-
   return (
     <section className="unlock-map" data-unlock-map>
       <div className="unlock-head">
@@ -1692,6 +1716,7 @@ function UnlockMapPanel({
 }
 
 function ParallelLanesPanel({
+  batch,
   dashboard,
   laneLoad,
   onActionComplete,
@@ -1700,6 +1725,7 @@ function ParallelLanesPanel({
   selectedWorkflowId,
   workflows,
 }: {
+  batch: ParallelBatch;
   dashboard: DashboardData;
   laneLoad: LaneLoad;
   onActionComplete: (workflow: WorkflowItem, shouldAdvance: boolean) => void;
@@ -1713,13 +1739,6 @@ function ParallelLanesPanel({
     dashboard,
     laneLoad,
     lanes: plan.lanes,
-    workflows,
-  });
-  const batch = parallelBatchFor({
-    dashboard,
-    laneLoad,
-    lanes: plan.lanes,
-    recommendedActive: plan.recommendedActive,
     workflows,
   });
   const batchPacket = buildParallelBatchPacket({ batch, dashboard, plan, workflows });
@@ -4265,6 +4284,100 @@ function buildWorkflowPacket(workflow: WorkflowItem, dashboard: DashboardData) {
   ]
     .filter((line) => line !== '')
     .join('\n');
+}
+
+function buildLivePlanPacket({
+  dashboard,
+  handoffs,
+  laneLoad,
+  parallelBatch,
+  parallelPlan,
+  plan,
+  projectPulse,
+  unlockMap,
+}: {
+  dashboard: DashboardData;
+  handoffs: Array<HandoffEvent>;
+  laneLoad: LaneLoad;
+  parallelBatch: ParallelBatch | null;
+  parallelPlan: ParallelPlan | null;
+  plan: ProjectPlan;
+  projectPulse: ProjectPulse;
+  unlockMap: UnlockMap;
+}) {
+  return [
+    '# Ticketboard live plan packet',
+    '',
+    `Generated: ${new Date().toISOString()}`,
+    `Repo: ${dashboard.repo.nameWithOwner} (${dashboard.repo.path})`,
+    `Summary: ${plan.summary}`,
+    '',
+    '## Live plan',
+    ...plan.sections.flatMap(planSectionPacketLines),
+    '',
+    '## Project pulse',
+    ...(projectPulse.items.length
+      ? projectPulse.items.map(
+          (item) => `- ${item.title}: ${item.detail} (${item.meta})`,
+        )
+      : ['- No Linear project grouping is visible.']),
+    '',
+    '## Lane load',
+    `- ${laneLoad.summary}; ${laneLoad.runningCount} Codex; ${laneLoad.dirtyCount} dirty; capacity ${laneLoad.recommendedActive}/${laneLoad.maxActive} (${laneLoad.capacityLabel})`,
+    ...(laneLoad.items.length
+      ? laneLoad.items.map((item) => `- ${item.title}: ${item.detail} (${item.meta})`)
+      : ['- No active local lanes are visible.']),
+    '',
+    '## Unlock map',
+    ...(unlockMap.items.length
+      ? unlockMap.items.map((item) => `- ${item.title}: ${item.detail} (${item.meta})`)
+      : ['- No explicit dependency blockers or PR gates are visible.']),
+    '',
+    '## Parallel lanes',
+    ...(parallelPlan
+      ? [
+          `- ${parallelPlan.summary}`,
+          `- Capacity: ${moveCount(parallelPlan.recommendedActive, 'active lane')} planned; ${moveCount(parallelPlan.maxActive, 'lane')} max`,
+          ...(parallelBatch
+            ? [
+                `- Safe batch: ${parallelBatch.title}`,
+                `- Batch detail: ${parallelBatch.detail}`,
+                ...parallelBatch.decisions.map(
+                  (decision) =>
+                    `- ${batchDecisionLabel(decision)}: ${decision.label} - ${decision.reason}`,
+                ),
+              ]
+            : []),
+        ]
+      : ['- No parallel lane plan is visible.']),
+    '',
+    '## Recent handoffs',
+    ...(handoffs.length
+      ? handoffs
+          .slice(0, 5)
+          .map(
+            (handoff) =>
+              `- ${handoffKindLabel(handoff.kind)} ${formatRelativeTime(handoff.ranAt)}: ${handoff.title} - ${handoff.message}`,
+          )
+      : ['- No recent local handoff events are recorded.']),
+    '',
+    '## Guardrails',
+    '- Keep exactly one focus lane responsible for merge, ship, or scope changes.',
+    '- Start or resume parallel lanes only when the safe-batch decision says they are ready.',
+    '- Treat capacity, dirty worktrees, and active Codex sessions as real lane load.',
+    '- After each PR merge, push, blocker, cleanup, or Codex handoff, refresh Ticketboard and regenerate this packet.',
+  ].join('\n');
+}
+
+function planSectionPacketLines(section: ProjectPlanSection) {
+  if (!section.items.length) return [`### ${section.title}`, `- ${section.empty}`];
+  return [
+    `### ${section.title}`,
+    ...section.items.map(
+      (item, index) =>
+        `${index + 1}. ${item.label}: ${item.detail}${item.meta ? ` (${item.meta})` : ''}`,
+    ),
+  ];
 }
 
 function buildParallelBatchPacket({

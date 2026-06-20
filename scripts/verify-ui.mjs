@@ -103,6 +103,17 @@ async function verifyViewport({ width, height, screenshot }) {
     if ((await page.locator('[data-plan-digest-item]').count()) < 1) {
       throw new Error('Expected compact generated plan digest items');
     }
+    await verifyCopyAction({
+      button: page.locator('[data-testid="copy-live-plan"]').first(),
+      expected: [
+        '# Ticketboard live plan packet',
+        '## Live plan',
+        '## Project pulse',
+        '## Parallel lanes',
+        '## Guardrails',
+      ],
+      page,
+    });
     await page.waitForSelector('[data-project-pulse]', { timeout: 10_000 });
     if (
       dashboard.linearTickets.some((ticket) => ticket.projectName) &&
@@ -440,6 +451,13 @@ async function verifyCopyAction({ button, expected, page }) {
       throw new Error(`Expected clipboard text to include ${phrase}`);
     }
   }
+  await page
+    .waitForFunction(
+      (element) => element.getAttribute('data-copy-state') === 'idle',
+      handle,
+      { timeout: 3_000 },
+    )
+    .catch(() => undefined);
 }
 
 async function assertPrimaryBeforePlan(page) {

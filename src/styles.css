@@ -996,6 +996,14 @@ input:focus-visible {
   font-size: 0.78rem;
 }
 
+.queue-actions {
+  display: flex;
+  max-width: 13rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
 .restore-button {
   min-height: 1.75rem;
   padding: 0.3rem 0.55rem;
@@ -2491,6 +2499,11 @@ button.plan-item {
 
   .metric-pill:nth-child(-n + 2) {
     border-bottom: 1px solid var(--border);
+  }
+
+  .queue-actions {
+    max-width: none;
+    justify-content: flex-start;
   }
 
   .primary-head,

@@ -24,6 +24,7 @@ It is designed to answer one question quickly: **what should own focus, what can
 - Explains the selected move with evidence, latest signal, terminal context, and finish criteria.
 - Can focus an existing tmux lane, create a worktree, resume Codex, open a PR, or launch a new Codex lane.
 - Shows a generated project plan: done, current, next, cleanup, and stale signals.
+- Copies a live-plan packet that mirrors the planning-doc workflow across projects, lanes, unlocks, and handoffs.
 - Keeps `/tokens` as a separate Codex usage page for spend, trends, and heavy sessions.
 
 ## How It Works
