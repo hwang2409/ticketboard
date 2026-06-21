@@ -431,6 +431,7 @@ input:focus-visible {
 .workflow-automation,
 .workflow-handoff,
 .source-dossier,
+.lane-contract,
 .manual-fallbacks {
   margin-right: 22px;
   margin-left: 22px;
@@ -791,6 +792,16 @@ input:focus-visible {
   background: var(--surface);
 }
 
+.lane-contract {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 1rem;
+  padding: 0.85rem 0.9rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.lane-contract-head,
 .source-dossier-head {
   display: flex;
   align-items: center;
@@ -798,6 +809,7 @@ input:focus-visible {
   gap: 0.75rem;
 }
 
+.lane-contract-head small,
 .source-dossier-head small {
   color: var(--muted);
   font-size: 0.68rem;
@@ -805,12 +817,14 @@ input:focus-visible {
   text-transform: uppercase;
 }
 
+.lane-contract-grid,
 .source-dossier-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.55rem;
 }
 
+.lane-contract-section,
 .source-dossier-section {
   display: grid;
   align-content: start;
@@ -821,6 +835,7 @@ input:focus-visible {
   background: var(--surface-muted);
 }
 
+.lane-contract-section > span,
 .source-dossier-section > span {
   color: var(--muted);
   font-size: 0.66rem;
@@ -828,12 +843,20 @@ input:focus-visible {
   text-transform: uppercase;
 }
 
+.lane-contract-section ol,
 .source-dossier-section ul {
   display: grid;
   gap: 0.4rem;
   margin: 0;
   padding: 0;
+}
+
+.source-dossier-section ul {
   list-style: none;
+}
+
+.lane-contract-section ol {
+  padding-left: 1rem;
 }
 
 .source-dossier-grid > p {
@@ -844,6 +867,7 @@ input:focus-visible {
   line-height: 1.35;
 }
 
+.lane-contract-section li,
 .source-dossier-section li,
 .source-dossier-section a {
   display: grid;
@@ -851,6 +875,10 @@ input:focus-visible {
   gap: 0.12rem;
   color: var(--foreground);
   text-decoration: none;
+}
+
+.lane-contract-section li {
+  padding-left: 0.1rem;
 }
 
 .source-dossier-section a {
@@ -874,6 +902,8 @@ input:focus-visible {
   text-decoration: underline;
 }
 
+.lane-contract-section strong,
+.lane-contract-section em,
 .source-dossier-section strong,
 .source-dossier-section em {
   min-width: 0;
@@ -882,10 +912,12 @@ input:focus-visible {
   white-space: nowrap;
 }
 
+.lane-contract-section strong,
 .source-dossier-section strong {
   font-size: 0.76rem;
 }
 
+.lane-contract-section em,
 .source-dossier-section em {
   color: var(--muted);
   font-size: 0.68rem;
@@ -2917,6 +2949,7 @@ button.plan-item {
   .workflow-automation,
   .workflow-handoff,
   .source-dossier,
+  .lane-contract,
   .manual-fallbacks {
     margin-right: 16px;
     margin-left: 16px;
@@ -2925,19 +2958,24 @@ button.plan-item {
   .automation-head,
   .brief-head,
   .brief-grid,
-  .source-dossier-grid {
+  .source-dossier-grid,
+  .lane-contract-grid {
     grid-template-columns: 1fr;
   }
 
+  .lane-contract-head,
   .source-dossier-head {
     align-items: flex-start;
     flex-direction: column;
   }
 
+  .lane-contract-head small,
   .source-dossier-head small {
     text-align: left;
   }
 
+  .lane-contract-section strong,
+  .lane-contract-section em,
   .source-dossier-section strong,
   .source-dossier-section em {
     white-space: normal;

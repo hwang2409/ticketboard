@@ -157,6 +157,17 @@ type SourceDossierSection = {
   title: string;
 };
 
+type LaneContractStep = {
+  detail: string;
+  label: string;
+};
+
+type LaneContractSection = {
+  id: 'after' | 'finish' | 'preflight';
+  items: Array<LaneContractStep>;
+  title: string;
+};
+
 type WorkflowItem = {
   id: string;
   intent: WorkflowIntent;
@@ -1218,6 +1229,8 @@ function PrimaryWorkflow({
 
       <WorkflowSourceDossier workflow={workflow} />
 
+      <WorkflowLaneContract workflow={workflow} />
+
       <details className="manual-fallbacks">
         <summary>Manual fallback and context</summary>
         <div className="fallback-actions">
@@ -1337,6 +1350,34 @@ function WorkflowSourceDossier({ workflow }: { workflow: WorkflowItem }) {
         )) : (
           <p>No linked Linear, PR, doc, Codex, tmux, or worktree context is visible.</p>
         )}
+      </div>
+    </section>
+  );
+}
+
+function WorkflowLaneContract({ workflow }: { workflow: WorkflowItem }) {
+  const sections = laneContractSections(workflow);
+
+  return (
+    <section className="lane-contract" data-lane-contract>
+      <div className="lane-contract-head">
+        <span className="section-kicker">Lane contract</span>
+        <small>{laneContractSummary(sections)}</small>
+      </div>
+      <div className="lane-contract-grid">
+        {sections.map((section) => (
+          <div className="lane-contract-section" data-lane-contract-section={section.id} key={section.id}>
+            <span>{section.title}</span>
+            <ol>
+              {section.items.map((item) => (
+                <li key={`${section.id}:${item.label}:${item.detail}`}>
+                  <strong>{item.label}</strong>
+                  <em>{sourceDossierDisplayText(item.detail)}</em>
+                </li>
+              ))}
+            </ol>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -5665,6 +5706,144 @@ function sourceDossierPromptLines(workflow: WorkflowItem) {
   return sourceDossierPacketLines(workflow).slice(0, 14);
 }
 
+function laneContractSections(workflow: WorkflowItem): Array<LaneContractSection> {
+  return [
+    {
+      id: 'preflight',
+      items: lanePreflightSteps(workflow),
+      title: 'Preflight',
+    },
+    {
+      id: 'finish',
+      items: laneFinishSteps(workflow),
+      title: 'Finish proof',
+    },
+    {
+      id: 'after',
+      items: laneAfterSteps(workflow),
+      title: 'After handoff',
+    },
+  ];
+}
+
+function lanePreflightSteps(workflow: WorkflowItem): Array<LaneContractStep> {
+  const primaryPr = workflow.prs[0] ?? null;
+  const primarySession = workflow.sessions[0] ?? null;
+  const primaryWorktree = workflow.worktrees[0] ?? null;
+  const steps: Array<LaneContractStep> = [];
+
+  if (workflow.linearTicket || workflow.ticket) {
+    steps.push({
+      detail: workflow.linearTicket
+        ? `Confirm source issue is still ${workflow.linearTicket.stateName}.`
+        : `Confirm source issue is still ${workflow.ticket?.state}.`,
+      label: 'Confirm source state',
+    });
+  }
+  if (primaryPr) {
+    steps.push({
+      detail: `${plainCheckState(primaryPr)} ${formatReviewState(primaryPr)}.`,
+      label: 'Confirm review gate',
+    });
+  }
+  if (primaryWorktree) {
+    steps.push({
+      detail: `${shortPath(primaryWorktree.path)} has ${primaryWorktree.dirtyCount ?? 0} dirty files.`,
+      label: 'Inspect local changes',
+    });
+  } else if (primarySession) {
+    steps.push({
+      detail: `${formatSessionStatus(primarySession)} in ${shortPath(primarySession.cwd)}.`,
+      label: 'Resume existing context',
+    });
+  }
+  if (!steps.length) {
+    steps.push({
+      detail: 'No source objects need extra preflight before this handoff.',
+      label: 'Ready to start',
+    });
+  }
+  return steps.slice(0, 4);
+}
+
+function laneFinishSteps(workflow: WorkflowItem): Array<LaneContractStep> {
+  const steps: Array<LaneContractStep> = [
+    {
+      detail: finishLineForWorkflow(workflow),
+      label: 'Done means',
+    },
+  ];
+  const primaryPr = workflow.prs[0] ?? null;
+  if (workflow.intent === 'fix-ci' && primaryPr) {
+    steps.push({
+      detail: 'All checks are passing and no new failure is visible.',
+      label: 'Checks proof',
+    });
+  } else if (workflow.intent === 'review') {
+    steps.push({
+      detail: 'Requested changes or review comments are answered with a concise note.',
+      label: 'Review proof',
+    });
+  } else if (workflow.intent === 'ship') {
+    steps.push({
+      detail: 'The change is merged or explicitly handed off, then local residue is cleaned.',
+      label: 'Ship proof',
+    });
+  } else if (workflow.intent === 'start' || workflow.intent === 'resume') {
+    steps.push({
+      detail: 'Leave a push, PR, validation result, or exact blocker for the next pass.',
+      label: 'Implementation proof',
+    });
+  } else if (workflow.intent === 'clean') {
+    steps.push({
+      detail: 'No stale terminal, worktree, or source issue remains in the active queue.',
+      label: 'Cleanup proof',
+    });
+  }
+  return steps.slice(0, 3);
+}
+
+function laneAfterSteps(workflow: WorkflowItem): Array<LaneContractStep> {
+  const steps: Array<LaneContractStep> = [
+    {
+      detail: 'Refresh Ticketboard so lane load, safe batch, and wave order use fresh evidence.',
+      label: 'Refresh board',
+    },
+    {
+      detail: 'Leave the exact validation command, result, and next handoff state.',
+      label: 'Record handoff',
+    },
+  ];
+  if (workflow.intent === 'ship' || workflow.intent === 'clean') {
+    steps.push({
+      detail: 'Clear leftover worktrees or tmux lanes after preserving useful context.',
+      label: 'Clear residue',
+    });
+  } else {
+    steps.push({
+      detail: 'Regenerate the Codex brief if source, checks, reviews, or planning docs changed.',
+      label: 'Regenerate plan',
+    });
+  }
+  return steps;
+}
+
+function laneContractSummary(sections: Array<LaneContractSection>) {
+  const stepCount = sections.reduce((total, section) => total + section.items.length, 0);
+  return `${moveCount(stepCount, 'step')} / preflight to handoff`;
+}
+
+function laneContractPacketLines(workflow: WorkflowItem) {
+  return laneContractSections(workflow).flatMap((section) => [
+    `- ${section.title}`,
+    ...section.items.map((item) => `  - ${item.label}: ${item.detail}`),
+  ]);
+}
+
+function laneContractPromptLines(workflow: WorkflowItem) {
+  return laneContractPacketLines(workflow).slice(0, 12);
+}
+
 function buildWorkflowPacket(workflow: WorkflowItem, dashboard: DashboardData) {
   const handoff = buildWorkflowHandoff(workflow);
   return [
@@ -5691,6 +5870,9 @@ function buildWorkflowPacket(workflow: WorkflowItem, dashboard: DashboardData) {
     '',
     '## Source dossier',
     ...sourceDossierPacketLines(workflow),
+    '',
+    '## Lane contract',
+    ...laneContractPacketLines(workflow),
     '',
     '## Latest signal',
     ...(workflow.signals.length
@@ -5922,6 +6104,8 @@ function parallelBatchLanePacket({
     ...(workflow?.prs.map((pr) => `PR #${pr.number}: ${pr.url}`) ?? []),
     workflow ? 'Source dossier:' : '',
     ...(workflow ? sourceDossierPacketLines(workflow).slice(0, 10) : []),
+    workflow ? 'Lane contract:' : '',
+    ...(workflow ? laneContractPacketLines(workflow).slice(0, 10) : []),
     lane.evidence.length ? 'Evidence:' : '',
     ...lane.evidence.map((line) => `- ${line}`),
     '',
@@ -5945,6 +6129,7 @@ function buildCodexPrompt(workflow: WorkflowItem) {
     '- Work only on this workflow unless the linked sources prove it is obsolete.',
     '- Prefer the existing worktree/session context when it exists.',
     '- End with the exact validation run and the next handoff state.',
+    '- Follow the lane contract before starting and before handing off.',
     '',
     'Source context:',
     ...workflow.evidence.map((line) => `- ${line}`),
@@ -5952,6 +6137,9 @@ function buildCodexPrompt(workflow: WorkflowItem) {
     '',
     'Source dossier:',
     ...sourceDossierPromptLines(workflow),
+    '',
+    'Lane contract:',
+    ...laneContractPromptLines(workflow),
   ].join('\n');
 }
 

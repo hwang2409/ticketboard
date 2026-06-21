@@ -254,6 +254,10 @@ async function verifyViewport({ width, height, screenshot }) {
     if (!dossierSections && !dossierText.includes('No linked Linear')) {
       throw new Error('Expected source dossier to expose source context or an empty state');
     }
+    await page.waitForSelector('[data-lane-contract]', { timeout: 10_000 });
+    if ((await page.locator('[data-lane-contract-section]').count()) < 3) {
+      throw new Error('Expected lane contract to expose preflight, finish, and after-handoff sections');
+    }
     if (width <= 760) {
       await assertPrimaryBeforePlan(page);
     }
@@ -281,12 +285,12 @@ async function verifyViewport({ width, height, screenshot }) {
     await page.locator('.manual-fallbacks summary').click();
     await verifyCopyAction({
       button: page.locator('[data-testid="copy-packet"]').first(),
-      expected: ['# Ticketboard work packet', '## Live handoff', '## Source dossier'],
+      expected: ['# Ticketboard work packet', '## Live handoff', '## Lane contract'],
       page,
     });
     await verifyCopyAction({
       button: page.locator('[data-testid="copy-prompt"]').first(),
-      expected: ['Use this Ticketboard packet', 'Live handoff:', 'Source dossier:'],
+      expected: ['Use this Ticketboard packet', 'Live handoff:', 'Lane contract:'],
       page,
     });
     const commandButton = page.locator('[data-testid="copy-commands"]').first();
