@@ -14,6 +14,7 @@ It is designed to answer one question quickly: **what should own focus, what can
 - Maps Linear blockers and PR gates into an unlock order.
 - Forecasts what finishing the focused lane should unlock or queue next.
 - Groups active work by Linear project so project pressure is visible before lane detail.
+- Builds a project runway from Linear project work: current, next, blocked, and recently done.
 - Shows current Codex, terminal, and dirty worktree lane load against the planned capacity.
 - Builds a lane plan for focus work, parallel Codex candidates, waiting checkpoints, and cleanup.
 - Shows a lane matrix for which ticket pairs can run together, need guards, or must serialize.

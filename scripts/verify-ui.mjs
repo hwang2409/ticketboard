@@ -121,6 +121,7 @@ async function verifyViewport({ width, height, screenshot }) {
         '# Ticketboard live plan packet',
         '## Live plan',
         '## Project pulse',
+        '## Project runway',
         '## Lane matrix',
         '## Parallel waves',
         '## After focus clears',
@@ -136,6 +137,19 @@ async function verifyViewport({ width, height, screenshot }) {
       (await page.locator('[data-project-pulse-item]').count()) < 1
     ) {
       throw new Error('Expected project pulse to group workflows by Linear project');
+    }
+    await page.waitForSelector('[data-project-runway]', { timeout: 10_000 });
+    if (
+      dashboard.linearTickets.some((ticket) => ticket.projectName) &&
+      (await page.locator('[data-project-runway-project]').count()) < 1
+    ) {
+      throw new Error('Expected project runway to group Linear projects into execution stages');
+    }
+    if (
+      (await page.locator('[data-project-runway-project]').count()) > 0 &&
+      (await page.locator('[data-project-runway-stage]').count()) < 4
+    ) {
+      throw new Error('Expected project runway to expose current, next, blocked, and done stages');
     }
     await page.waitForSelector('[data-lane-load]', { timeout: 10_000 });
     const hasLiveLane =

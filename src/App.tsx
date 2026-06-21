@@ -273,6 +273,42 @@ type ProjectPulse = {
   summary: string;
 };
 
+type ProjectRunwayStage = 'blocked' | 'current' | 'done' | 'next';
+
+type ProjectRunwayEntry = {
+  detail: string;
+  id: string;
+  meta: string;
+  stage: ProjectRunwayStage;
+  title: string;
+  tone: ProjectPlanTone;
+  workflowId: string | null;
+};
+
+type ProjectRunwayItem = {
+  blocked: Array<ProjectRunwayEntry>;
+  current: Array<ProjectRunwayEntry>;
+  done: Array<ProjectRunwayEntry>;
+  id: string;
+  next: Array<ProjectRunwayEntry>;
+  summary: string;
+  title: string;
+  tone: ProjectPlanTone;
+  workflowId: string | null;
+};
+
+type ProjectRunway = {
+  items: Array<ProjectRunwayItem>;
+  summary: string;
+};
+
+const PROJECT_RUNWAY_STAGES: Array<{ id: ProjectRunwayStage; label: string }> = [
+  { id: 'current', label: 'Current' },
+  { id: 'next', label: 'Next' },
+  { id: 'blocked', label: 'Blocked' },
+  { id: 'done', label: 'Done' },
+];
+
 type LaneLoadTone = 'active' | 'over' | 'warn';
 
 type LaneLoadItem = {
@@ -1738,6 +1774,7 @@ function ProjectPlanRail({
 }) {
   const laneLoad = buildLaneLoad({ parallelPlan, workflows });
   const projectPulse = buildProjectPulse(workflows);
+  const projectRunway = buildProjectRunway({ dashboard, workflows });
   const unlockMap = buildUnlockMap({ dashboard, workflows });
   const selectedWorkflow =
     workflows.find((workflow) => workflow.id === selectedWorkflowId) ?? null;
@@ -1774,6 +1811,7 @@ function ProjectPlanRail({
     parallelWaves,
     plan,
     projectPulse,
+    projectRunway,
     unlockMap,
     workflows,
   });
@@ -1809,6 +1847,8 @@ function ProjectPlanRail({
       />
 
       <ProjectPulsePanel onSelect={onSelect} pulse={projectPulse} />
+
+      <ProjectRunwayPanel onSelect={onSelect} runway={projectRunway} />
 
       <LaneMatrixPanel matrix={laneMatrix} onSelect={onSelect} />
 
@@ -2018,6 +2058,107 @@ function ProjectPulsePanel({
         )}
       </div>
     </section>
+  );
+}
+
+function ProjectRunwayPanel({
+  onSelect,
+  runway,
+}: {
+  onSelect: (id: string) => void;
+  runway: ProjectRunway;
+}) {
+  return (
+    <section className="project-runway" data-project-runway>
+      <div className="project-pulse-head">
+        <span className="section-kicker">Project runway</span>
+        <small>{runway.summary}</small>
+      </div>
+      <div className="project-runway-list">
+        {runway.items.length ? (
+          runway.items.map((item) => (
+            <div
+              className={`project-runway-project project-runway-project-${item.tone}`}
+              data-project-runway-project={item.id}
+              key={item.id}
+            >
+              <div className="project-runway-title">
+                <button
+                  disabled={!item.workflowId}
+                  onClick={() => item.workflowId && onSelect(item.workflowId)}
+                  type="button"
+                >
+                  <strong>{item.title}</strong>
+                  <em>{item.summary}</em>
+                </button>
+              </div>
+              <div className="project-runway-stages">
+                {PROJECT_RUNWAY_STAGES.map((stage) => (
+                  <ProjectRunwayStageCell
+                    entries={item[stage.id]}
+                    key={stage.id}
+                    label={stage.label}
+                    onSelect={onSelect}
+                    stage={stage.id}
+                  />
+                ))}
+              </div>
+            </div>
+          ))
+        ) : (
+          <p>No project runway is visible.</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function ProjectRunwayStageCell({
+  entries,
+  label,
+  onSelect,
+  stage,
+}: {
+  entries: Array<ProjectRunwayEntry>;
+  label: string;
+  onSelect: (id: string) => void;
+  stage: ProjectRunwayStage;
+}) {
+  const entry = entries[0] ?? null;
+  const content = entry ? (
+    <>
+      <b>{entry.title}</b>
+      <em>{entry.detail}</em>
+      <small>{entry.meta}</small>
+    </>
+  ) : (
+    <>
+      <b>Clear</b>
+      <em>No item in this stage.</em>
+      <small>{label}</small>
+    </>
+  );
+
+  return entry?.workflowId ? (
+    <button
+      className={`project-runway-stage project-runway-stage-${stage} project-runway-stage-${entry.tone}`}
+      data-project-runway-stage={stage}
+      onClick={() => onSelect(entry.workflowId as string)}
+      title={entry.detail}
+      type="button"
+    >
+      <span>{label}</span>
+      {content}
+    </button>
+  ) : (
+    <span
+      className={`project-runway-stage project-runway-stage-${stage}${entry ? ` project-runway-stage-${entry.tone}` : ''}`}
+      data-project-runway-stage={stage}
+      title={entry?.detail}
+    >
+      <span>{label}</span>
+      {content}
+    </span>
   );
 }
 
@@ -4440,6 +4581,263 @@ function projectPulseToneRank(tone: ProjectPlanTone) {
   return 3;
 }
 
+function buildProjectRunway({
+  dashboard,
+  workflows,
+}: {
+  dashboard: DashboardData;
+  workflows: Array<WorkflowItem>;
+}): ProjectRunway {
+  const groups = new Map<string, {
+    tickets: Array<LinearTicketSummary>;
+    workflows: Array<WorkflowItem>;
+  }>();
+  const ensureGroup = (projectName: string) => {
+    const normalized = projectName.trim() || 'No project';
+    const existing = groups.get(normalized);
+    if (existing) return existing;
+    const next = { tickets: [], workflows: [] };
+    groups.set(normalized, next);
+    return next;
+  };
+
+  for (const ticket of dashboard.linearTickets) {
+    if (!ticket.projectName) continue;
+    ensureGroup(ticket.projectName).tickets.push(ticket);
+  }
+  for (const workflow of workflows) {
+    const projectName = projectNameForWorkflow(workflow);
+    if (!projectName) continue;
+    ensureGroup(projectName).workflows.push(workflow);
+  }
+
+  const items = [...groups.entries()]
+    .map(([projectName, group]) =>
+      projectRunwayItem(projectName, group.workflows, group.tickets),
+    )
+    .filter((item): item is ProjectRunwayItem => Boolean(item))
+    .sort(
+      (left, right) =>
+        projectPulseToneRank(left.tone) - projectPulseToneRank(right.tone) ||
+        right.blocked.length - left.blocked.length ||
+        right.current.length - left.current.length ||
+        right.next.length - left.next.length,
+    )
+    .slice(0, 4);
+
+  const activeProjects = items.filter((item) => item.current.length || item.blocked.length).length;
+  return {
+    items,
+    summary: items.length
+      ? `${moveCount(items.length, 'project')} / ${moveCount(activeProjects, 'active')}`
+      : 'No project runway visible',
+  };
+}
+
+function projectRunwayItem(
+  projectName: string,
+  workflows: Array<WorkflowItem>,
+  tickets: Array<LinearTicketSummary>,
+): ProjectRunwayItem | null {
+  const seen = new Set<string>();
+  const entries: Record<ProjectRunwayStage, Array<ProjectRunwayEntry>> = {
+    blocked: [],
+    current: [],
+    done: [],
+    next: [],
+  };
+  const add = (entry: ProjectRunwayEntry) => {
+    if (seen.has(entry.id)) return;
+    seen.add(entry.id);
+    entries[entry.stage].push(entry);
+  };
+
+  for (const workflow of [...workflows].sort((left, right) => right.score - left.score)) {
+    add(projectRunwayEntryFromWorkflow(workflow));
+  }
+
+  const workflowTicketIds = new Set(
+    workflows.flatMap((workflow) => [...workflowTicketIdsArray(workflow)]),
+  );
+  for (const ticket of [...tickets].sort(sortLinearTicketsForRunway)) {
+    if (workflowTicketIds.has(ticket.ticketId.toUpperCase())) continue;
+    add(projectRunwayEntryFromTicket(ticket));
+  }
+
+  const current = entries.current.slice(0, 2);
+  const next = entries.next.slice(0, 2);
+  const blocked = entries.blocked.slice(0, 2);
+  const done = entries.done.slice(0, 1);
+  if (!current.length && !next.length && !blocked.length && !done.length) return null;
+
+  const tone: ProjectPlanTone = blocked.length
+    ? 'hot'
+    : current.some((entry) => entry.tone === 'warn' || entry.tone === 'hot')
+      ? 'warn'
+      : next.length
+        ? 'ready'
+        : 'calm';
+  const workflowId =
+    current.find((entry) => entry.workflowId)?.workflowId ??
+    blocked.find((entry) => entry.workflowId)?.workflowId ??
+    next.find((entry) => entry.workflowId)?.workflowId ??
+    done.find((entry) => entry.workflowId)?.workflowId ??
+    null;
+
+  return {
+    blocked,
+    current,
+    done,
+    id: `project-runway:${slugify(projectName)}`,
+    next,
+    summary: [
+      current.length ? `${current.length} current` : '',
+      next.length ? `${next.length} next` : '',
+      blocked.length ? `${blocked.length} blocked` : '',
+      done.length ? `${done.length} done` : '',
+    ].filter(Boolean).join(' / '),
+    title: projectName,
+    tone,
+    workflowId,
+  };
+}
+
+function projectRunwayEntryFromWorkflow(workflow: WorkflowItem): ProjectRunwayEntry {
+  const stage = projectRunwayStageForWorkflow(workflow);
+  return {
+    detail: truncate(workflow.nextStep, 84),
+    id: `workflow:${workflow.id}`,
+    meta: projectRunwayWorkflowMeta(workflow),
+    stage,
+    title: readableTitle(workflow.title),
+    tone: workflow.tone,
+    workflowId: workflow.id,
+  };
+}
+
+function projectRunwayEntryFromTicket(ticket: LinearTicketSummary): ProjectRunwayEntry {
+  const stage = projectRunwayStageForTicket(ticket);
+  return {
+    detail: projectRunwayTicketDetail(ticket, stage),
+    id: `linear:${ticket.ticketId}`,
+    meta: ticket.cycleName || ticket.stateName || 'Linear',
+    stage,
+    title: readableTitle(ticket.title || ticket.ticketId),
+    tone: projectRunwayToneForStage(stage, ticket.priority),
+    workflowId: null,
+  };
+}
+
+function projectRunwayStageForWorkflow(workflow: WorkflowItem): ProjectRunwayStage {
+  if (workflowBlocked(workflow)) return 'blocked';
+  if (workflow.linearTicket && projectRunwayStageForTicket(workflow.linearTicket) === 'done') {
+    return 'done';
+  }
+  if (
+    workflowHasLiveLane(workflow) ||
+    ['clean', 'fix-ci', 'resume', 'review', 'ship'].includes(workflow.intent)
+  ) {
+    return 'current';
+  }
+  return 'next';
+}
+
+function projectRunwayStageForTicket(ticket: LinearTicketSummary): ProjectRunwayStage {
+  if (ticket.stateType === 'completed' || ticket.stateType === 'canceled' || ticket.completedAt) {
+    return 'done';
+  }
+  if (linearTicketBlocked(ticket)) return 'blocked';
+  if (ticket.stateType === 'backlog' || ticket.stateType === 'unstarted') {
+    return 'next';
+  }
+  return 'current';
+}
+
+function projectRunwayToneForStage(
+  stage: ProjectRunwayStage,
+  priority: number | null,
+): ProjectPlanTone {
+  if (stage === 'blocked') return 'hot';
+  if (stage === 'current') return priority === 1 || priority === 2 ? 'hot' : 'warn';
+  if (stage === 'next') return 'ready';
+  return 'calm';
+}
+
+function workflowBlocked(workflow: WorkflowItem) {
+  return Boolean(
+    workflow.ticket?.state === 'blocked' ||
+      (workflow.linearTicket && linearTicketBlocked(workflow.linearTicket)) ||
+      workflow.prs.some((pr) => pr.checkSummary.state === 'red'),
+  );
+}
+
+function linearTicketBlocked(ticket: LinearTicketSummary) {
+  const stateName = ticket.stateName.toLowerCase();
+  if (stateName.includes('block')) return true;
+  return ticket.relatedIssues.some((relation) => {
+    const edge = unlockEdgeFromRelation(ticket, relation);
+    return Boolean(edge && edge.blocked.ticketId === ticket.ticketId && !isLinearIssueDone(edge.blocker));
+  });
+}
+
+function projectRunwayWorkflowMeta(workflow: WorkflowItem) {
+  const live = workflowHasLiveLane(workflow) ? 'Live lane' : INTENT_LABELS[workflow.intent];
+  const prState = workflow.prs.find((pr) => pr.checkSummary.state !== 'unknown')?.checkSummary.state;
+  return prState ? `${live} / ${prState}` : live;
+}
+
+function projectRunwayTicketDetail(
+  ticket: LinearTicketSummary,
+  stage: ProjectRunwayStage,
+) {
+  if (stage === 'done') {
+    return ticket.completedAt
+      ? `Completed ${formatRelativeTime(ticket.completedAt)}.`
+      : `State is ${ticket.stateName}.`;
+  }
+  if (stage === 'blocked') {
+    const blocker = ticket.relatedIssues
+      .map((relation) => unlockEdgeFromRelation(ticket, relation))
+      .find((edge) => edge && edge.blocked.ticketId === ticket.ticketId && !isLinearIssueDone(edge.blocker));
+    return blocker
+      ? `Waiting on ${blocker.blocker.ticketId}: ${blocker.blocker.title}.`
+      : `State is ${ticket.stateName}.`;
+  }
+  if (stage === 'next') {
+    return ticket.dueDate ? `Queued; due ${ticket.dueDate}.` : 'Queued behind current project work.';
+  }
+  return ticket.startedAt
+    ? `Started ${formatRelativeTime(ticket.startedAt)}.`
+    : `State is ${ticket.stateName}.`;
+}
+
+function sortLinearTicketsForRunway(
+  left: LinearTicketSummary,
+  right: LinearTicketSummary,
+) {
+  return (
+    projectRunwayStageRank(projectRunwayStageForTicket(left)) -
+    projectRunwayStageRank(projectRunwayStageForTicket(right)) ||
+    linearPriorityRank(left.priority) - linearPriorityRank(right.priority) ||
+    timestampMs(right.updatedAt) - timestampMs(left.updatedAt)
+  );
+}
+
+function projectRunwayStageRank(stage: ProjectRunwayStage) {
+  if (stage === 'blocked') return 0;
+  if (stage === 'current') return 1;
+  if (stage === 'next') return 2;
+  return 3;
+}
+
+function linearPriorityRank(priority: number | null) {
+  return typeof priority === 'number' && priority > 0 ? priority : 99;
+}
+
+function workflowTicketIdsArray(workflow: WorkflowItem) {
+  return [...workflowTicketIds(workflow)];
+}
+
 function buildLaneLoad({
   parallelPlan,
   workflows,
@@ -6072,6 +6470,7 @@ function buildLivePlanPacket({
   parallelWaves,
   plan,
   projectPulse,
+  projectRunway,
   unlockMap,
   workflows,
 }: {
@@ -6086,6 +6485,7 @@ function buildLivePlanPacket({
   parallelWaves: ParallelWavePlan | null;
   plan: ProjectPlan;
   projectPulse: ProjectPulse;
+  projectRunway: ProjectRunway;
   unlockMap: UnlockMap;
   workflows: Array<WorkflowItem>;
 }) {
@@ -6107,6 +6507,11 @@ function buildLivePlanPacket({
           (item) => `- ${item.title}: ${item.detail} (${item.meta})`,
         )
       : ['- No Linear project grouping is visible.']),
+    '',
+    '## Project runway',
+    ...(projectRunway.items.length
+      ? projectRunway.items.flatMap(projectRunwayPacketLines)
+      : ['- No project runway is visible.']),
     '',
     '## Lane load',
     `- ${laneLoad.summary}; ${laneLoad.runningCount} Codex; ${laneLoad.dirtyCount} dirty; capacity ${laneLoad.recommendedActive}/${laneLoad.maxActive} (${laneLoad.capacityLabel})`,
@@ -6203,6 +6608,19 @@ function planSectionPacketLines(section: ProjectPlanSection) {
         `${index + 1}. ${item.label}: ${item.detail}${item.meta ? ` (${item.meta})` : ''}`,
     ),
   ];
+}
+
+function projectRunwayPacketLines(item: ProjectRunwayItem) {
+  const stageLines = PROJECT_RUNWAY_STAGES.flatMap((stage) => {
+    const entries = item[stage.id];
+    return entries.length
+      ? entries.map(
+          (entry) =>
+            `  - ${stage.label}: ${entry.title} - ${entry.detail} (${entry.meta})`,
+        )
+      : [`  - ${stage.label}: clear`];
+  });
+  return [`- ${item.title}: ${item.summary}`, ...stageLines];
 }
 
 function buildParallelBatchPacket({

@@ -1247,6 +1247,15 @@ button.plan-digest-item {
   background: var(--surface);
 }
 
+.project-runway {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--surface);
+}
+
 .project-pulse-head {
   display: flex;
   align-items: center;
@@ -1266,7 +1275,19 @@ button.plan-digest-item {
   gap: 0.4rem;
 }
 
+.project-runway-list {
+  display: grid;
+  gap: 0.45rem;
+}
+
 .project-pulse-list > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.project-runway-list > p {
   margin: 0;
   color: var(--muted);
   font-size: 0.74rem;
@@ -1335,6 +1356,144 @@ button.plan-digest-item {
 
 .project-pulse-item-ready {
   border-left-color: var(--green);
+}
+
+.project-runway-project {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.6rem;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--border-strong);
+  background: var(--surface-muted);
+}
+
+.project-runway-project-hot {
+  border-left-color: var(--danger);
+}
+
+.project-runway-project-warn {
+  border-left-color: var(--warning);
+}
+
+.project-runway-project-ready {
+  border-left-color: var(--green);
+}
+
+.project-runway-title button {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 0.15rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  cursor: pointer;
+  text-align: left;
+}
+
+.project-runway-title button:disabled {
+  cursor: default;
+}
+
+.project-runway-title strong,
+.project-runway-title em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-runway-title strong {
+  font-size: 0.78rem;
+}
+
+.project-runway-title em {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-style: normal;
+}
+
+.project-runway-stages {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.project-runway-stage {
+  display: grid;
+  min-width: 0;
+  min-height: 5.9rem;
+  align-content: start;
+  gap: 0.2rem;
+  padding: 0.45rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--foreground);
+  text-align: left;
+}
+
+button.project-runway-stage {
+  cursor: pointer;
+}
+
+button.project-runway-stage:hover,
+button.project-runway-stage:focus-visible {
+  border-color: var(--foreground);
+}
+
+.project-runway-stage > span {
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.project-runway-stage b,
+.project-runway-stage em,
+.project-runway-stage small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-runway-stage b {
+  font-size: 0.68rem;
+  line-height: 1.25;
+}
+
+.project-runway-stage em,
+.project-runway-stage small {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-style: normal;
+  line-height: 1.25;
+}
+
+.project-runway-stage-blocked {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+}
+
+.project-runway-stage-current {
+  border-color: color-mix(in srgb, var(--warning) 35%, var(--border));
+}
+
+.project-runway-stage-next {
+  border-color: color-mix(in srgb, var(--green) 35%, var(--border));
+}
+
+.project-runway-stage-hot {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+}
+
+.project-runway-stage-warn {
+  border-color: color-mix(in srgb, var(--warning) 35%, var(--border));
+}
+
+.project-runway-stage-ready {
+  border-color: color-mix(in srgb, var(--green) 35%, var(--border));
 }
 
 .lane-load {
@@ -3005,10 +3164,11 @@ button.plan-item {
     justify-self: start;
   }
 
-  .parallel-head,
-  .project-pulse-item,
-  .lane-load-item,
-  .lane-matrix-item,
+	  .parallel-head,
+	  .project-pulse-item,
+	  .project-runway-project,
+	  .lane-load-item,
+	  .lane-matrix-item,
   .handoff-item,
   .unlock-item,
   .parallel-lane,
@@ -3034,9 +3194,13 @@ button.plan-item {
     width: 100%;
   }
 
-  .parallel-next-action > span {
-    text-align: left;
-  }
+	  .parallel-next-action > span {
+	    text-align: left;
+	  }
+
+	  .project-runway-stages {
+	    grid-template-columns: repeat(2, minmax(0, 1fr));
+	  }
 
   .parallel-waves-head {
     align-items: flex-start;
