@@ -431,6 +431,8 @@ export type WorkflowBriefLane = WorkflowBriefItem & {
 export type WorkflowRefreshRequest = {
   active: boolean;
   ageSeconds?: number | null;
+  batchId?: string | null;
+  batchTitle?: string | null;
   handoffId?: string | null;
   kind?: string | null;
   path: string;
@@ -505,6 +507,8 @@ export type WorkflowActionKind =
 export type WorkflowActionRequest = {
   kind: WorkflowActionKind;
   workflowId: string;
+  batchId?: string;
+  batchTitle?: string;
   cwd?: string;
   dryRun?: boolean;
   branchName?: string | null;

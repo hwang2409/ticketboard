@@ -125,6 +125,7 @@ async function verifyViewport({ width, height, screenshot }) {
         '## Parallel waves',
         '## After focus clears',
         '## Parallel lanes',
+        '## Parallel run memory',
         '## Guardrails',
       ],
       page,
@@ -158,6 +159,10 @@ async function verifyViewport({ width, height, screenshot }) {
     }
     if ((await page.locator('[data-handoff-outcome]').count()) < 1) {
       throw new Error('Expected recent handoffs to expose current outcomes');
+    }
+    await page.waitForSelector('[data-parallel-run-ledger]', { timeout: 10_000 });
+    if ((await page.locator('[data-parallel-run]').count()) < 1) {
+      throw new Error('Expected grouped parallel run memory to render');
     }
     await page.waitForSelector('[data-unlock-map]', { timeout: 10_000 });
     await page.waitForSelector('[data-completion-forecast]', { timeout: 10_000 });
@@ -351,6 +356,8 @@ async function mockUserStateRoutes(page) {
     dismissed: {},
     handoffs: [
       {
+        batchId: 'verify-batch',
+        batchTitle: 'Verify parallel run',
         command: 'tmux new-window ...',
         id: 'verify-handoff',
         kind: 'resume-codex',
@@ -360,6 +367,19 @@ async function mockUserStateRoutes(page) {
         ticketId: 'PHO-000',
         title: 'Resume current lane',
         workflowId: 'ticket:PHO-000',
+      },
+      {
+        batchId: 'verify-batch',
+        batchTitle: 'Verify parallel run',
+        command: 'tmux new-window ...',
+        id: 'verify-handoff-2',
+        kind: 'launch-codex',
+        message: 'Started Codex in tmux session phoebe.',
+        prNumber: null,
+        ranAt: new Date(Date.now() - 30_000).toISOString(),
+        ticketId: 'PHO-001',
+        title: 'Start sibling lane',
+        workflowId: 'ticket:PHO-001',
       },
     ],
   };
@@ -497,6 +517,16 @@ async function verifySafeBatchRevalidation(page, dashboard, workflowBrief) {
     await route.continue();
   };
   const actionHandler = async (route) => {
+    const payload = route.request().postDataJSON();
+    if (
+      !payload ||
+      typeof payload.batchId !== 'string' ||
+      !payload.batchId.startsWith('batch:') ||
+      typeof payload.batchTitle !== 'string' ||
+      !payload.batchTitle.trim()
+    ) {
+      throw new Error('Expected safe batch workflow action to include batch metadata');
+    }
     events.push('workflow-action');
     await route.fulfill({
       body: JSON.stringify({
@@ -877,6 +907,7 @@ function validateWorkflowEvidenceShape(response) {
   const recentHandoffs = response?.snapshot?.recentHandoffs;
   const planDocs = response?.snapshot?.planDocs;
   const planningSignals = response?.snapshot?.planningSignals;
+  const parallelRuns = response?.snapshot?.parallelRuns;
   const prs = response?.snapshot?.prs;
   const refreshRequest = response?.snapshot?.refreshRequest;
   const sourceDossiers = response?.snapshot?.sourceDossiers;
@@ -892,6 +923,7 @@ function validateWorkflowEvidenceShape(response) {
     !Array.isArray(planningSignals.docs) ||
     !Array.isArray(planningSignals.sections) ||
     !Array.isArray(planningSignals.ticketIds) ||
+    !Array.isArray(parallelRuns) ||
     !Array.isArray(recentHandoffs) ||
     !Array.isArray(prs) ||
     !Array.isArray(sourceDossiers) ||
@@ -903,7 +935,7 @@ function validateWorkflowEvidenceShape(response) {
     !verification.commands ||
     typeof verification.commands !== 'object'
   ) {
-    throw new Error('Expected workflow evidence snapshot to include plan docs, source dossiers, recent handoffs, refresh requests, PRs, and verification hints');
+    throw new Error('Expected workflow evidence snapshot to include plan docs, source dossiers, parallel runs, recent handoffs, refresh requests, PRs, and verification hints');
   }
   validateRefreshRequestShape(refreshRequest);
   if ('ageSeconds' in refreshRequest) {
@@ -947,6 +979,18 @@ function validateWorkflowEvidenceShape(response) {
       typeof handoff.outcome?.tone !== 'string'
     ) {
       throw new Error(`Expected recent handoff ${index} to include current outcome`);
+    }
+  }
+  for (const [index, run] of parallelRuns.entries()) {
+    if (
+      !run ||
+      typeof run !== 'object' ||
+      typeof run.batchId !== 'string' ||
+      typeof run.batchTitle !== 'string' ||
+      typeof run.laneCount !== 'number' ||
+      !Array.isArray(run.handoffs)
+    ) {
+      throw new Error(`Expected parallel run ${index} to include batch metadata and handoffs`);
     }
   }
 }

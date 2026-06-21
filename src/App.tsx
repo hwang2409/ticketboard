@@ -73,6 +73,8 @@ type DismissedWorkflow = {
 };
 
 type HandoffEvent = {
+  batchId?: string | null;
+  batchTitle?: string | null;
   command?: string;
   id: string;
   kind: string;
@@ -93,6 +95,16 @@ type HandoffOutcome = {
   detail: string;
   label: string;
   tone: 'cleared' | 'live' | 'quiet';
+};
+
+type ParallelRunGroup = {
+  id: string;
+  items: Array<HandoffEvent & { outcome: HandoffOutcome }>;
+  ranAt: string;
+  summary: string;
+  title: string;
+  tone: HandoffOutcome['tone'];
+  workflowId: string | null;
 };
 
 type ActionButtonState =
@@ -1597,7 +1609,9 @@ function briefAutomationSummary(
     return 'A Codex generator lock is active, so another watcher should wait.';
   }
   if (refreshRequest) {
-    const target = refreshRequest.workflowId || refreshRequest.title || 'the latest handoff';
+    const target = refreshRequest.batchTitle
+      ? `parallel run ${sourceDossierDisplayText(refreshRequest.batchTitle)}`
+      : refreshRequest.workflowId || refreshRequest.title || 'the latest handoff';
     return `A Codex brief refresh is queued for ${target}; the watcher should run it before normal cadence.`;
   }
   if (pendingHandoff) {
@@ -1739,6 +1753,7 @@ function ProjectPlanRail({
   const laneMatrix = parallelPlan
     ? buildLaneMatrix({ lanes: parallelPlan.lanes, workflows })
     : emptyLaneMatrix();
+  const parallelRuns = buildParallelRunGroups(handoffs, workflows);
   const completionForecast = buildCompletionForecast({
     dashboard,
     parallelBatch,
@@ -1755,6 +1770,7 @@ function ProjectPlanRail({
     laneLoad,
     parallelBatch,
     parallelPlan,
+    parallelRuns,
     parallelWaves,
     plan,
     projectPulse,
@@ -1802,6 +1818,8 @@ function ProjectPlanRail({
       />
 
       <HandoffLedger handoffs={handoffs} onSelect={onSelect} workflows={workflows} />
+
+      <ParallelRunLedger groups={parallelRuns} onSelect={onSelect} />
 
       <CompletionForecastPanel forecast={completionForecast} onSelect={onSelect} />
 
@@ -2153,6 +2171,131 @@ function HandoffLedger({
                 {outcome.label} / {handoffKindLabel(handoff.kind)} / {formatRelativeTime(handoff.ranAt)}
               </small>
             </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function buildParallelRunGroups(
+  handoffs: Array<HandoffEvent>,
+  workflows: Array<WorkflowItem>,
+): Array<ParallelRunGroup> {
+  const workflowsById = new Map(workflows.map((workflow) => [workflow.id, workflow]));
+  const grouped = new Map<string, ParallelRunGroup>();
+
+  for (const handoff of handoffs) {
+    const batchId = handoff.batchId?.trim();
+    if (!batchId) continue;
+    const outcome = handoffOutcome(workflowsById.get(handoff.workflowId) ?? null);
+    const existing = grouped.get(batchId);
+    if (!existing) {
+      grouped.set(batchId, {
+        id: batchId,
+        items: [{ ...handoff, outcome }],
+        ranAt: handoff.ranAt,
+        summary: '',
+        title: handoff.batchTitle?.trim() || 'Parallel run',
+        tone: outcome.tone,
+        workflowId: workflowsById.has(handoff.workflowId) ? handoff.workflowId : null,
+      });
+      continue;
+    }
+    existing.items.push({ ...handoff, outcome });
+    if (timestampMs(handoff.ranAt) > timestampMs(existing.ranAt)) {
+      existing.ranAt = handoff.ranAt;
+    }
+    if (!existing.workflowId && workflowsById.has(handoff.workflowId)) {
+      existing.workflowId = handoff.workflowId;
+    }
+  }
+
+  return [...grouped.values()]
+    .map((group) => {
+      const liveCount = group.items.filter((item) => item.outcome.tone === 'live').length;
+      const quietCount = group.items.filter((item) => item.outcome.tone === 'quiet').length;
+      const clearedCount = group.items.filter((item) => item.outcome.tone === 'cleared').length;
+      const outcomeParts = [
+        liveCount ? `${liveCount} live` : '',
+        quietCount ? `${quietCount} idle` : '',
+        clearedCount ? `${clearedCount} cleared` : '',
+      ].filter(Boolean);
+      const tone: HandoffOutcome['tone'] = liveCount
+        ? 'live'
+        : quietCount
+          ? 'quiet'
+          : 'cleared';
+      return {
+        ...group,
+        items: group.items.sort(
+          (left, right) => timestampMs(right.ranAt) - timestampMs(left.ranAt),
+        ),
+        summary: [
+          moveCount(group.items.length, 'lane'),
+          ...outcomeParts,
+        ].join(' / '),
+        tone,
+      };
+    })
+    .sort((left, right) => timestampMs(right.ranAt) - timestampMs(left.ranAt))
+    .slice(0, 4);
+}
+
+function ParallelRunLedger({
+  groups,
+  onSelect,
+}: {
+  groups: Array<ParallelRunGroup>;
+  onSelect: (id: string) => void;
+}) {
+  if (!groups.length) return null;
+
+  return (
+    <section className="handoff-ledger parallel-run-ledger" data-parallel-run-ledger>
+      <div className="handoff-head">
+        <span className="section-kicker">Parallel runs</span>
+        <small>{moveCount(groups.length, 'batch')}</small>
+      </div>
+      <div className="handoff-list">
+        {groups.map((group) => {
+          const details = group.items
+            .map((item) =>
+              `${handoffKindLabel(item.kind)}: ${sourceDossierDisplayText(item.title || item.workflowId)}`,
+            )
+            .join(' / ');
+          const content = (
+            <>
+              <span>
+                <strong>{sourceDossierDisplayText(readableTitle(group.title))}</strong>
+                <em>{details}</em>
+                <i>{group.summary}</i>
+              </span>
+              <small>
+                {group.tone} / {formatRelativeTime(group.ranAt)}
+              </small>
+            </>
+          );
+          return group.workflowId ? (
+            <button
+              className={`handoff-item handoff-item-${group.tone}`}
+              data-parallel-run={group.id}
+              data-parallel-run-outcome={group.tone}
+              key={group.id}
+              onClick={() => onSelect(group.workflowId as string)}
+              type="button"
+            >
+              {content}
+            </button>
+          ) : (
+            <span
+              className={`handoff-item handoff-item-${group.tone}`}
+              data-parallel-run={group.id}
+              data-parallel-run-outcome={group.tone}
+              key={group.id}
+            >
+              {content}
+            </span>
           );
         })}
       </div>
@@ -2913,6 +3056,7 @@ function BatchWorkflowActionButton({
       if (!runnableActions.length) {
         throw new Error(`Batch revalidated; no lanes remain safe to run. ${prepared.detail}`);
       }
+      const batchRun = safeBatchRunMetadata(runnableActions);
       setState({
         completed: 0,
         message: `${moveCount(runnableActions.length, 'lane')} still safe after fresh evidence.`,
@@ -2930,7 +3074,11 @@ function BatchWorkflowActionButton({
           total: runnableActions.length,
         });
         const response = await fetch('/api/workflow-action', {
-          body: JSON.stringify(item.action.request),
+          body: JSON.stringify({
+            ...item.action.request,
+            batchId: batchRun.id,
+            batchTitle: batchRun.title,
+          }),
           headers: { 'content-type': 'application/json' },
           method: 'POST',
         });
@@ -3002,6 +3150,27 @@ function BatchWorkflowActionButton({
       ) : null}
     </>
   );
+}
+
+function safeBatchRunMetadata(actions: Array<RunnableLaneAction>) {
+  const signature = actions.map((item) => item.workflow.id).join('|');
+  const titleBase = actions
+    .map((item) => sourceDossierDisplayText(item.workflow.title))
+    .slice(0, 3)
+    .join(' + ');
+  const extraCount = Math.max(0, actions.length - 3);
+  return {
+    id: `batch:${Date.now().toString(36)}:${shortHashCode(signature || 'empty')}`,
+    title: `${titleBase || 'Safe batch'}${extraCount ? ` + ${extraCount} more` : ''}`,
+  };
+}
+
+function shortHashCode(value: string) {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = Math.imul(31, hash) + value.charCodeAt(index);
+  }
+  return Math.abs(hash).toString(36);
 }
 
 function buildWorkflows(dashboard: DashboardData): Array<WorkflowItem> {
@@ -5899,6 +6068,7 @@ function buildLivePlanPacket({
   laneLoad,
   parallelBatch,
   parallelPlan,
+  parallelRuns,
   parallelWaves,
   plan,
   projectPulse,
@@ -5912,6 +6082,7 @@ function buildLivePlanPacket({
   laneLoad: LaneLoad;
   parallelBatch: ParallelBatch | null;
   parallelPlan: ParallelPlan | null;
+  parallelRuns: Array<ParallelRunGroup>;
   parallelWaves: ParallelWavePlan | null;
   plan: ProjectPlan;
   projectPulse: ProjectPulse;
@@ -5996,6 +6167,14 @@ function buildLivePlanPacket({
             : []),
         ]
       : ['- No parallel lane plan is visible.']),
+    '',
+    '## Parallel run memory',
+    ...(parallelRuns.length
+      ? parallelRuns.map(
+          (group) =>
+            `- ${sourceDossierDisplayText(group.title)}: ${group.summary}; ${formatRelativeTime(group.ranAt)}`,
+        )
+      : ['- No grouped parallel runs are recorded.']),
     '',
     '## Recent handoffs',
     ...(handoffs.length
@@ -6673,6 +6852,8 @@ function normalizeHandoffEvents(value: Array<HandoffEvent>) {
       typeof event.ranAt === 'string',
     )
     .map((event) => ({
+      batchId: typeof event.batchId === 'string' ? event.batchId : null,
+      batchTitle: typeof event.batchTitle === 'string' ? event.batchTitle : null,
       command: typeof event.command === 'string' ? event.command : '',
       id: event.id,
       kind: typeof event.kind === 'string' ? event.kind : '',

@@ -745,6 +745,8 @@ def normalize_handoff_events(value: Any) -> list[dict[str, Any]]:
             continue
         handoffs.append(
             {
+                "batchId": str(item.get("batchId") or "").strip() or None,
+                "batchTitle": str(item.get("batchTitle") or "").strip() or None,
                 "id": handoff_id,
                 "kind": str(item.get("kind") or "").strip(),
                 "workflowId": workflow_id,
@@ -813,6 +815,8 @@ def record_workflow_handoff(payload: dict[str, Any], result: dict[str, Any]) -> 
     except Exception:
         pr_number = None
     entry = {
+        "batchId": str(payload.get("batchId") or "").strip() or None,
+        "batchTitle": str(payload.get("batchTitle") or "").strip() or None,
         "id": f"{ran_at}:{workflow_id}:{kind}",
         "kind": kind,
         "workflowId": workflow_id,
@@ -834,6 +838,8 @@ def record_workflow_handoff(payload: dict[str, Any], result: dict[str, Any]) -> 
     request_workflow_brief_refresh(
         settings,
         {
+            "batchId": entry["batchId"],
+            "batchTitle": entry["batchTitle"],
             "handoffId": entry["id"],
             "kind": kind,
             "prNumber": pr_number,

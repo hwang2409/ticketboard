@@ -152,6 +152,8 @@ def workflow_refresh_request_status(brief_path: Path) -> dict[str, Any]:
     return {
         "active": True,
         "ageSeconds": age_seconds,
+        "batchId": payload.get("batchId"),
+        "batchTitle": payload.get("batchTitle"),
         "handoffId": payload.get("handoffId"),
         "kind": payload.get("kind"),
         "path": str(path),
@@ -174,6 +176,8 @@ def workflow_refresh_request_evidence(brief_path: Path) -> dict[str, Any]:
         }
     return {
         "active": True,
+        "batchId": status.get("batchId"),
+        "batchTitle": status.get("batchTitle"),
         "handoffId": status.get("handoffId"),
         "kind": status.get("kind"),
         "path": status.get("path"),
@@ -388,6 +392,7 @@ def build_workflow_evidence_snapshot(
             recent_handoffs or [],
             dashboard,
         ),
+        "parallelRuns": summarize_parallel_runs(recent_handoffs or [], dashboard),
         "refreshRequest": workflow_refresh_request_evidence(
             workflow_brief_path(settings),
         ),
@@ -404,7 +409,9 @@ def build_workflow_evidence_snapshot(
                 "Only mark lanes parallel-safe when their work can proceed without "
                 "overwriting the focus lane or depending on its result. Treat "
                 "recent handoffs as orchestration memory so launched/resumed lanes "
-                "are not immediately recommended again unless live evidence changed."
+                "are not immediately recommended again unless live evidence changed. "
+                "Use parallelRuns to remember which lanes were intentionally launched "
+                "together and whether that batch is still live, idle, or cleared."
             ),
             "outputPath": str(workflow_brief_path(settings)),
         },
@@ -560,6 +567,8 @@ def summarize_recent_handoffs(
         summarized.append(
             {
                 "id": item.get("id"),
+                "batchId": item.get("batchId"),
+                "batchTitle": item.get("batchTitle"),
                 "kind": item.get("kind"),
                 "workflowId": item.get("workflowId"),
                 "title": item.get("title"),
@@ -571,6 +580,75 @@ def summarize_recent_handoffs(
             },
         )
     return summarized
+
+
+def summarize_parallel_runs(
+    handoffs: list[dict[str, Any]],
+    dashboard: dict[str, Any],
+) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for item in handoffs:
+        if not isinstance(item, dict):
+            continue
+        batch_id = str(item.get("batchId") or "").strip()
+        if not batch_id:
+            continue
+        group = grouped.setdefault(
+            batch_id,
+            {
+                "batchId": batch_id,
+                "batchTitle": str(item.get("batchTitle") or "").strip() or "Parallel run",
+                "handoffs": [],
+                "ranAt": item.get("ranAt"),
+            },
+        )
+        ran_at = str(item.get("ranAt") or "")
+        if ran_at > str(group.get("ranAt") or ""):
+            group["ranAt"] = ran_at
+        group["handoffs"].append(
+            {
+                "id": item.get("id"),
+                "kind": item.get("kind"),
+                "workflowId": item.get("workflowId"),
+                "title": item.get("title"),
+                "ticketId": item.get("ticketId"),
+                "prNumber": item.get("prNumber"),
+                "message": item.get("message"),
+                "ranAt": item.get("ranAt"),
+                "outcome": handoff_outcome(item, dashboard),
+            },
+        )
+
+    summarized: list[dict[str, Any]] = []
+    for group in grouped.values():
+        handoff_items = sorted(
+            group["handoffs"],
+            key=lambda item: str(item.get("ranAt") or ""),
+            reverse=True,
+        )
+        tones = []
+        for handoff in handoff_items:
+            outcome = handoff.get("outcome")
+            if isinstance(outcome, dict):
+                tones.append(str(outcome.get("tone") or ""))
+        summarized.append(
+            {
+                "batchId": group["batchId"],
+                "batchTitle": group["batchTitle"],
+                "ranAt": group.get("ranAt"),
+                "laneCount": len(handoff_items),
+                "liveCount": tones.count("live"),
+                "quietCount": tones.count("quiet"),
+                "clearedCount": tones.count("cleared"),
+                "handoffs": handoff_items[:8],
+            },
+        )
+
+    return sorted(
+        summarized,
+        key=lambda item: str(item.get("ranAt") or ""),
+        reverse=True,
+    )[:8]
 
 
 def summarize_pr_files(files: Any) -> list[dict[str, Any]]:

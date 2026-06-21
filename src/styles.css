@@ -1635,6 +1635,10 @@ button.plan-digest-item {
   border-color: var(--foreground);
 }
 
+.parallel-run-ledger .handoff-item:not(button) {
+  cursor: default;
+}
+
 .handoff-item span {
   display: grid;
   min-width: 0;

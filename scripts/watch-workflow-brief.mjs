@@ -291,7 +291,7 @@ function activeRefreshRequest(status) {
 }
 
 function refreshRequestReason(request) {
-  const workflow = request.workflowId || request.title || request.handoffId;
+  const workflow = request.batchTitle || request.workflowId || request.title || request.handoffId;
   const prefix = request.source === 'workflow-action'
     ? 'after handoff'
     : 'from manual request';

@@ -22,6 +22,7 @@ It is designed to answer one question quickly: **what should own focus, what can
 - Explains why each parallel lane is ready, guarded, or waiting in the batch decision trail.
 - Copies a safe-batch packet with run-now lanes, decision trail, and guardrails.
 - Revalidates live dashboard and brief state before running every currently safe automated lane in the batch.
+- Records safe-batch launches as grouped parallel-run receipts, so later plans remember which lanes started together.
 - Guards Codex lane actions when focus safety is unknown, files overlap, or lane capacity is full.
 - Refuses duplicate backend Codex starts when a live session, terminal lane, or worktree already owns the same workflow.
 - Opens existing cleanup worktrees instead of spawning fresh Codex lanes for leftover local residue.
