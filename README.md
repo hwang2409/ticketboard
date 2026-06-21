@@ -28,6 +28,8 @@ It is designed to answer one question quickly: **what should own focus, what can
 - Uses PR files and worktree status to flag shared code areas before running parallel lanes.
 - Offers a next-safe-lane action when one parallel Codex handoff is ready.
 - Tracks recent handoff outcomes so launched or resumed lanes show live, quiet, or cleared state in both the UI and Codex evidence.
+- Builds a source dossier for each workflow from Linear project/cycle/labels, attachments, recent comments, related blockers, PR files, Codex sessions, tmux windows, and worktrees.
+- Includes that source dossier in copied work packets, Codex lane prompts, and the Codex evidence snapshot.
 - Queues and flags a refreshed Codex plan whenever a workflow handoff is newer than the current brief.
 - Lets you manually queue a fresh Codex plan from the dashboard without running a terminal command.
 - Checks for evidence drift while a brief is still fresh, so PR merges, check changes, handoffs, or planning-doc edits can trigger a new Codex plan before the 10-minute cadence expires.

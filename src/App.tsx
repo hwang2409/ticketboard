@@ -145,6 +145,18 @@ type WorkflowHandoff = {
   reason: string;
 };
 
+type SourceDossierItem = {
+  detail: string;
+  href?: string | null;
+  label: string;
+};
+
+type SourceDossierSection = {
+  id: string;
+  items: Array<SourceDossierItem>;
+  title: string;
+};
+
 type WorkflowItem = {
   id: string;
   intent: WorkflowIntent;
@@ -1204,6 +1216,8 @@ function PrimaryWorkflow({
 
       <WorkflowHandoffPanel handoff={handoff} />
 
+      <WorkflowSourceDossier workflow={workflow} />
+
       <details className="manual-fallbacks">
         <summary>Manual fallback and context</summary>
         <div className="fallback-actions">
@@ -1283,6 +1297,46 @@ function WorkflowHandoffPanel({ handoff }: { handoff: WorkflowHandoff }) {
       <div>
         <span>Finished when</span>
         <p>{handoff.finish}</p>
+      </div>
+    </section>
+  );
+}
+
+function WorkflowSourceDossier({ workflow }: { workflow: WorkflowItem }) {
+  const sections = sourceDossierSections(workflow);
+
+  return (
+    <section className="source-dossier" data-source-dossier>
+      <div className="source-dossier-head">
+        <span className="section-kicker">Source dossier</span>
+        <small>{sourceDossierSummary(sections)}</small>
+      </div>
+      <div className="source-dossier-grid">
+        {sections.length ? sections.map((section) => (
+          <div className="source-dossier-section" data-source-dossier-section={section.id} key={section.id}>
+            <span>{section.title}</span>
+            <ul>
+              {section.items.map((item) => (
+                <li key={`${section.id}:${item.label}:${item.detail}`}>
+                  {item.href ? (
+                    <a href={item.href} rel="noreferrer" target="_blank">
+                      <strong>{sourceDossierDisplayText(item.label)}</strong>
+                      <em>{sourceDossierDisplayText(item.detail)}</em>
+                      <ExternalLink aria-hidden="true" size={13} />
+                    </a>
+                  ) : (
+                    <>
+                      <strong>{sourceDossierDisplayText(item.label)}</strong>
+                      <em>{sourceDossierDisplayText(item.detail)}</em>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )) : (
+          <p>No linked Linear, PR, doc, Codex, tmux, or worktree context is visible.</p>
+        )}
       </div>
     </section>
   );
@@ -5459,6 +5513,158 @@ function finishLineForWorkflow(workflow: WorkflowItem) {
   return 'the workflow has a concrete owner, blocker, or next action.';
 }
 
+function sourceDossierSections(workflow: WorkflowItem): Array<SourceDossierSection> {
+  const sections = [
+    sourceDossierLinearSection(workflow),
+    sourceDossierDocsSection(workflow),
+    sourceDossierPrSection(workflow),
+    sourceDossierLocalSection(workflow),
+  ].filter((section): section is SourceDossierSection => Boolean(section?.items.length));
+  return sections;
+}
+
+function sourceDossierLinearSection(workflow: WorkflowItem): SourceDossierSection | null {
+  const ticket = workflow.linearTicket;
+  if (!ticket) return null;
+  const labels = ticket.labels.map((label) => label.name).filter(Boolean);
+  const relations = ticket.relatedIssues.slice(0, 4).map((relation) => ({
+    detail: `${relationLabel(relation.relationType)} ${relation.issue.stateName || 'unknown'} / ${truncate(relation.issue.title, 90)}`,
+    href: relation.issue.url,
+    label: relation.issue.ticketId,
+  }));
+  const items: Array<SourceDossierItem> = [
+    {
+      detail: [
+        ticket.projectName ? `Project ${ticket.projectName}` : '',
+        ticket.cycleName ? `Cycle ${ticket.cycleName}` : '',
+        ticket.priority ? `P${ticket.priority}` : '',
+      ].filter(Boolean).join(' / ') || 'No project, cycle, or priority metadata.',
+      href: ticket.projectUrl,
+      label: 'Planning lane',
+    },
+    {
+      detail: [
+        ticket.stateName,
+        ticket.assignee ? `Owner ${ticket.assignee}` : '',
+        ticket.dueDate ? `Due ${ticket.dueDate}` : '',
+      ].filter(Boolean).join(' / '),
+      href: ticket.url,
+      label: ticket.ticketId,
+    },
+    labels.length
+      ? {
+          detail: labels.slice(0, 6).join(', '),
+          label: 'Labels',
+        }
+      : null,
+    ticket.parent
+      ? {
+          detail: `${ticket.parent.stateName || 'unknown'} / ${truncate(ticket.parent.title, 90)}`,
+          href: ticket.parent.url,
+          label: `Parent ${ticket.parent.ticketId}`,
+        }
+      : null,
+    ...relations,
+    ticket.children.length
+      ? {
+          detail: ticket.children
+            .slice(0, 4)
+            .map((child) => `${child.ticketId} ${child.stateName || ''}`.trim())
+            .join(', '),
+          label: 'Children',
+        }
+      : null,
+  ].filter((item): item is SourceDossierItem => Boolean(item?.detail));
+  return { id: 'linear', items, title: 'Linear' };
+}
+
+function sourceDossierDocsSection(workflow: WorkflowItem): SourceDossierSection | null {
+  const ticket = workflow.linearTicket;
+  if (!ticket) return null;
+  const comments = [...ticket.comments]
+    .sort((left, right) => timestampMs(right.createdAt) - timestampMs(left.createdAt))
+    .slice(0, 2)
+    .map((comment) => ({
+      detail: truncate(stripBasicMarkdown(comment.body), 120) || 'Empty comment',
+      href: comment.url,
+      label: `Comment ${comment.author}`,
+    }));
+  const items: Array<SourceDossierItem> = [
+    ...ticket.attachments.slice(0, 4).map((attachment) => ({
+      detail: attachment.subtitle || formatRelativeTime(attachment.createdAt),
+      href: attachment.url,
+      label: attachment.title || 'Attachment',
+    })),
+    ...comments,
+    ...ticket.activity.slice(0, 2).map((activity) => ({
+      detail: activity.summary,
+      href: null,
+      label: `Activity ${activity.actor}`,
+    })),
+  ].filter((item) => item.detail || item.href);
+  return { id: 'docs', items, title: 'Docs and notes' };
+}
+
+function sourceDossierPrSection(workflow: WorkflowItem): SourceDossierSection | null {
+  const items: Array<SourceDossierItem> = workflow.prs.slice(0, 3).map((pr) => {
+    const zones = changedPathZones(pr.files.map((file) => file.path)).slice(0, 4);
+    return {
+      detail: [
+        plainCheckState(pr),
+        formatReviewState(pr),
+        zones.length ? `Touches ${zones.join(', ')}` : '',
+      ].filter(Boolean).join(' / '),
+      href: pr.url,
+      label: `PR #${pr.number}`,
+    };
+  });
+  return { id: 'prs', items, title: 'PRs' };
+}
+
+function sourceDossierLocalSection(workflow: WorkflowItem): SourceDossierSection | null {
+  const items: Array<SourceDossierItem> = [
+    ...workflow.sessions.slice(0, 3).map((session) => ({
+      detail: `${formatSessionStatus(session)} / ${shortPath(session.cwd)} / ${formatNumber(session.tokensUsed)} tokens`,
+      label: `Codex ${session.threadId.slice(0, 8)}`,
+    })),
+    ...workflow.worktrees.slice(0, 3).map((worktree) => ({
+      detail: `${worktree.branch ?? worktree.head ?? 'No branch'} / ${worktree.dirtyCount ?? 0} dirty files`,
+      label: shortPath(worktree.path),
+    })),
+    ...workflow.windows.slice(0, 3).map((window) => ({
+      detail: `${window.command || 'terminal'} / ${shortPath(window.path)}`,
+      label: `${window.session}:${window.index}`,
+    })),
+  ];
+  return { id: 'local', items, title: 'Local lane' };
+}
+
+function sourceDossierSummary(sections: Array<SourceDossierSection>) {
+  const itemCount = sections.reduce((total, section) => total + section.items.length, 0);
+  return `${moveCount(sections.length, 'source')} / ${moveCount(itemCount, 'item')}`;
+}
+
+function sourceDossierDisplayText(value: string) {
+  return value
+    .replace(/\b[A-Z][A-Z0-9]+-\d+\b/gu, 'source issue')
+    .replace(/\bPR\s*#\d+\b/giu, 'pull request');
+}
+
+function sourceDossierPacketLines(workflow: WorkflowItem) {
+  const sections = sourceDossierSections(workflow);
+  if (!sections.length) return ['- No source dossier is linked to this workflow.'];
+  return sections.flatMap((section) => [
+    `- ${section.title}`,
+    ...section.items.map((item) =>
+      `  - ${item.label}: ${item.detail}${item.href ? ` (${item.href})` : ''}`,
+    ),
+  ]);
+}
+
+function sourceDossierPromptLines(workflow: WorkflowItem) {
+  return sourceDossierPacketLines(workflow).slice(0, 14);
+}
+
 function buildWorkflowPacket(workflow: WorkflowItem, dashboard: DashboardData) {
   const handoff = buildWorkflowHandoff(workflow);
   return [
@@ -5482,6 +5688,9 @@ function buildWorkflowPacket(workflow: WorkflowItem, dashboard: DashboardData) {
     '',
     '## Context',
     ...workflow.evidence.map((line) => `- ${line}`),
+    '',
+    '## Source dossier',
+    ...sourceDossierPacketLines(workflow),
     '',
     '## Latest signal',
     ...(workflow.signals.length
@@ -5711,6 +5920,8 @@ function parallelBatchLanePacket({
     handoff ? `Then: ${handoff.next}` : '',
     workflow?.linearTicket ? `Linear: ${workflow.linearTicket.url}` : '',
     ...(workflow?.prs.map((pr) => `PR #${pr.number}: ${pr.url}`) ?? []),
+    workflow ? 'Source dossier:' : '',
+    ...(workflow ? sourceDossierPacketLines(workflow).slice(0, 10) : []),
     lane.evidence.length ? 'Evidence:' : '',
     ...lane.evidence.map((line) => `- ${line}`),
     '',
@@ -5738,6 +5949,9 @@ function buildCodexPrompt(workflow: WorkflowItem) {
     'Source context:',
     ...workflow.evidence.map((line) => `- ${line}`),
     ...workflow.signals.slice(0, 3).map((line) => `- Latest: ${line}`),
+    '',
+    'Source dossier:',
+    ...sourceDossierPromptLines(workflow),
   ].join('\n');
 }
 

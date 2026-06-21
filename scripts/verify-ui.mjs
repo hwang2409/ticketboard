@@ -248,6 +248,12 @@ async function verifyViewport({ width, height, screenshot }) {
     }
     await assertApprovedGreenPrimaryIsNotReview(page, dashboard);
     await assertWorkflowEyebrow(page);
+    await page.waitForSelector('[data-source-dossier]', { timeout: 10_000 });
+    const dossierSections = await page.locator('[data-source-dossier-section]').count();
+    const dossierText = (await page.locator('[data-source-dossier]').innerText()).trim();
+    if (!dossierSections && !dossierText.includes('No linked Linear')) {
+      throw new Error('Expected source dossier to expose source context or an empty state');
+    }
     if (width <= 760) {
       await assertPrimaryBeforePlan(page);
     }
@@ -275,12 +281,12 @@ async function verifyViewport({ width, height, screenshot }) {
     await page.locator('.manual-fallbacks summary').click();
     await verifyCopyAction({
       button: page.locator('[data-testid="copy-packet"]').first(),
-      expected: ['# Ticketboard work packet', '## Live handoff', '## Context'],
+      expected: ['# Ticketboard work packet', '## Live handoff', '## Source dossier'],
       page,
     });
     await verifyCopyAction({
       button: page.locator('[data-testid="copy-prompt"]').first(),
-      expected: ['Use this Ticketboard packet', 'Live handoff:', 'Source context:'],
+      expected: ['Use this Ticketboard packet', 'Live handoff:', 'Source dossier:'],
       page,
     });
     const commandButton = page.locator('[data-testid="copy-commands"]').first();
@@ -869,6 +875,7 @@ function validateWorkflowEvidenceShape(response) {
   const planningSignals = response?.snapshot?.planningSignals;
   const prs = response?.snapshot?.prs;
   const refreshRequest = response?.snapshot?.refreshRequest;
+  const sourceDossiers = response?.snapshot?.sourceDossiers;
   const verification = response?.snapshot?.verification;
   if (
     !response ||
@@ -883,6 +890,7 @@ function validateWorkflowEvidenceShape(response) {
     !Array.isArray(planningSignals.ticketIds) ||
     !Array.isArray(recentHandoffs) ||
     !Array.isArray(prs) ||
+    !Array.isArray(sourceDossiers) ||
     !refreshRequest ||
     typeof refreshRequest !== 'object' ||
     !verification ||
@@ -891,7 +899,7 @@ function validateWorkflowEvidenceShape(response) {
     !verification.commands ||
     typeof verification.commands !== 'object'
   ) {
-    throw new Error('Expected workflow evidence snapshot to include plan docs, recent handoffs, refresh requests, PRs, and verification hints');
+    throw new Error('Expected workflow evidence snapshot to include plan docs, source dossiers, recent handoffs, refresh requests, PRs, and verification hints');
   }
   validateRefreshRequestShape(refreshRequest);
   if ('ageSeconds' in refreshRequest) {
@@ -910,6 +918,20 @@ function validateWorkflowEvidenceShape(response) {
   for (const [index, pr] of prs.entries()) {
     if (!pr || typeof pr !== 'object' || !Array.isArray(pr.files)) {
       throw new Error(`Expected workflow evidence PR ${index} to include changed files`);
+    }
+  }
+  for (const [index, dossier] of sourceDossiers.entries()) {
+    if (
+      !dossier ||
+      typeof dossier !== 'object' ||
+      typeof dossier.ticketId !== 'string' ||
+      !Array.isArray(dossier.attachments) ||
+      !Array.isArray(dossier.latestComments) ||
+      !Array.isArray(dossier.relatedIssues) ||
+      !dossier.local ||
+      typeof dossier.local !== 'object'
+    ) {
+      throw new Error(`Expected workflow evidence source dossier ${index} to include ticket, docs, relations, and local state`);
     }
   }
   for (const [index, handoff] of recentHandoffs.entries()) {

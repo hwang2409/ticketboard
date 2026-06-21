@@ -4,6 +4,7 @@ import hashlib
 import os
 import re
 import shlex
+from collections import defaultdict
 from datetime import UTC, datetime
 from glob import glob
 from pathlib import Path
@@ -309,6 +310,15 @@ def build_workflow_evidence_snapshot(
                     for label in ticket.get("labels", [])
                     if isinstance(label, dict) and label.get("name")
                 ],
+                "attachments": summarize_linear_attachments(
+                    ticket.get("attachments", []),
+                ),
+                "latestComments": summarize_linear_comments(
+                    ticket.get("comments", []),
+                ),
+                "relatedIssues": summarize_linear_relations(
+                    ticket.get("relatedIssues", []),
+                ),
                 "branchName": ticket.get("branchName"),
                 "startedAt": ticket.get("startedAt"),
                 "completedAt": ticket.get("completedAt"),
@@ -318,6 +328,7 @@ def build_workflow_evidence_snapshot(
             for ticket in dashboard.get("linearTickets", [])
         ],
         "projectFocus": summarize_project_focus(dashboard.get("linearTickets", [])),
+        "sourceDossiers": summarize_source_dossiers(dashboard),
         "prs": [
             {
                 "number": pr.get("number"),
@@ -578,6 +589,176 @@ def summarize_pr_files(files: Any) -> list[dict[str, Any]]:
             },
         )
     return summarized
+
+
+def summarize_linear_attachments(attachments: Any) -> list[dict[str, Any]]:
+    if not isinstance(attachments, list):
+        return []
+    summarized = []
+    for item in attachments[:8]:
+        if not isinstance(item, dict):
+            continue
+        summarized.append(
+            {
+                "title": item.get("title"),
+                "subtitle": item.get("subtitle"),
+                "url": item.get("url"),
+                "createdAt": item.get("createdAt"),
+            },
+        )
+    return summarized
+
+
+def summarize_linear_comments(comments: Any) -> list[dict[str, Any]]:
+    if not isinstance(comments, list):
+        return []
+    sorted_comments = sorted(
+        [item for item in comments if isinstance(item, dict)],
+        key=lambda item: str(item.get("createdAt") or ""),
+        reverse=True,
+    )
+    return [
+        {
+            "author": item.get("author"),
+            "body": compact_evidence_text(item.get("body"), 320),
+            "createdAt": item.get("createdAt"),
+            "url": item.get("url"),
+        }
+        for item in sorted_comments[:5]
+    ]
+
+
+def summarize_linear_relations(relations: Any) -> list[dict[str, Any]]:
+    if not isinstance(relations, list):
+        return []
+    summarized = []
+    for item in relations[:12]:
+        if not isinstance(item, dict):
+            continue
+        issue = item.get("issue")
+        if not isinstance(issue, dict):
+            continue
+        summarized.append(
+            {
+                "relationType": item.get("relationType"),
+                "ticketId": issue.get("ticketId"),
+                "title": issue.get("title"),
+                "stateName": issue.get("stateName"),
+                "stateType": issue.get("stateType"),
+                "url": issue.get("url"),
+            },
+        )
+    return summarized
+
+
+def summarize_source_dossiers(dashboard: dict[str, Any]) -> list[dict[str, Any]]:
+    linear_by_id = {
+        str(ticket.get("ticketId") or "").upper(): ticket
+        for ticket in dashboard.get("linearTickets", [])
+        if isinstance(ticket, dict) and ticket.get("ticketId")
+    }
+    prs_by_ticket: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    sessions_by_ticket: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    worktrees_by_ticket: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    windows_by_ticket: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+    for pr in dashboard.get("prs", []):
+        if not isinstance(pr, dict):
+            continue
+        for ticket_id in pr.get("ticketIds", []):
+            prs_by_ticket[str(ticket_id).upper()].append(pr)
+
+    for session in dashboard.get("codexSessions", []):
+        if not isinstance(session, dict):
+            continue
+        for ticket_id in session.get("ticketIds", []):
+            sessions_by_ticket[str(ticket_id).upper()].append(session)
+
+    for worktree in dashboard.get("worktrees", []):
+        if not isinstance(worktree, dict):
+            continue
+        for ticket_id in worktree.get("ticketIds", []):
+            worktrees_by_ticket[str(ticket_id).upper()].append(worktree)
+
+    for window in dashboard.get("tmuxWindows", []):
+        if not isinstance(window, dict):
+            continue
+        for ticket_id in window.get("ticketIds", []):
+            windows_by_ticket[str(ticket_id).upper()].append(window)
+
+    dossiers = []
+    for ticket_id, ticket in sorted(linear_by_id.items()):
+        dossiers.append(
+            {
+                "ticketId": ticket_id,
+                "title": ticket.get("title"),
+                "projectName": ticket.get("projectName"),
+                "cycleName": ticket.get("cycleName"),
+                "stateName": ticket.get("stateName"),
+                "labels": [
+                    label.get("name")
+                    for label in ticket.get("labels", [])
+                    if isinstance(label, dict) and label.get("name")
+                ][:8],
+                "attachments": summarize_linear_attachments(
+                    ticket.get("attachments", []),
+                ),
+                "latestComments": summarize_linear_comments(
+                    ticket.get("comments", []),
+                ),
+                "relatedIssues": summarize_linear_relations(
+                    ticket.get("relatedIssues", []),
+                ),
+                "prs": [
+                    {
+                        "number": pr.get("number"),
+                        "title": pr.get("title"),
+                        "reviewDecision": pr.get("reviewDecision"),
+                        "checkSummary": pr.get("checkSummary"),
+                        "files": summarize_pr_files(pr.get("files", []))[:12],
+                    }
+                    for pr in prs_by_ticket.get(ticket_id, [])[:4]
+                ],
+                "local": {
+                    "codexSessions": [
+                        {
+                            "threadId": session.get("threadId"),
+                            "title": session.get("title"),
+                            "cwd": session.get("cwd"),
+                            "status": session.get("status"),
+                            "updatedAt": session.get("updatedAt"),
+                        }
+                        for session in sessions_by_ticket.get(ticket_id, [])[:4]
+                    ],
+                    "worktrees": [
+                        {
+                            "path": worktree.get("path"),
+                            "branch": worktree.get("branch"),
+                            "dirtyCount": worktree.get("dirtyCount"),
+                            "statusLines": worktree.get("statusLines", [])[:12],
+                        }
+                        for worktree in worktrees_by_ticket.get(ticket_id, [])[:4]
+                    ],
+                    "tmuxWindows": [
+                        {
+                            "session": window.get("session"),
+                            "index": window.get("index"),
+                            "name": window.get("name"),
+                            "path": window.get("path"),
+                        }
+                        for window in windows_by_ticket.get(ticket_id, [])[:4]
+                    ],
+                },
+            },
+        )
+    return dossiers[:20]
+
+
+def compact_evidence_text(value: Any, limit: int) -> str:
+    cleaned = re.sub(r"\s+", " ", str(value or "")).strip()
+    if len(cleaned) <= limit:
+        return cleaned
+    return cleaned[: max(0, limit - 3)].rstrip() + "..."
 
 
 def handoff_outcome(item: dict[str, Any], dashboard: dict[str, Any]) -> dict[str, Any]:
