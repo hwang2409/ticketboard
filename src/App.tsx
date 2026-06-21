@@ -5622,6 +5622,18 @@ function buildWorkflowAction(
     };
   }
 
+  if (workflow.intent === 'clean' && primaryWorktree) {
+    return {
+      label: 'Open cleanup',
+      request: {
+        kind: 'open-worktree',
+        path: primaryWorktree.path,
+        workflowId: workflow.id,
+      },
+      runningLabel: 'Opening cleanup',
+    };
+  }
+
   if (
     ['fix-ci', 'review', 'resume'].includes(workflow.intent) ||
     ticketId ||

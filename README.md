@@ -23,6 +23,7 @@ It is designed to answer one question quickly: **what should own focus, what can
 - Revalidates live dashboard and brief state before running every currently safe automated lane in the batch.
 - Guards Codex lane actions when focus safety is unknown, files overlap, or lane capacity is full.
 - Refuses duplicate backend Codex starts when a live session, terminal lane, or worktree already owns the same workflow.
+- Opens existing cleanup worktrees instead of spawning fresh Codex lanes for leftover local residue.
 - Uses PR files and worktree status to flag shared code areas before running parallel lanes.
 - Offers a next-safe-lane action when one parallel Codex handoff is ready.
 - Tracks recent handoff outcomes so launched or resumed lanes show live, quiet, or cleared state in both the UI and Codex evidence.
