@@ -122,6 +122,7 @@ async function verifyViewport({ width, height, screenshot }) {
         '## Live plan',
         '## Project pulse',
         '## Lane matrix',
+        '## Parallel waves',
         '## After focus clears',
         '## Parallel lanes',
         '## Guardrails',
@@ -198,7 +199,14 @@ async function verifyViewport({ width, height, screenshot }) {
       await assertWorkflowBriefSelection(page, workflowBrief);
       if (Array.isArray(workflowBrief.brief?.lanes) && workflowBrief.brief.lanes.length) {
         await page.waitForSelector('[data-parallel-lanes]', { timeout: 10_000 });
+        await page.waitForSelector('[data-parallel-waves]', { timeout: 10_000 });
         await page.waitForSelector('[data-parallel-batch]', { timeout: 10_000 });
+        if ((await page.locator('[data-parallel-wave]').count()) < 1) {
+          throw new Error('Expected parallel lane panel to render ordered workflow waves');
+        }
+        if ((await page.locator('[data-parallel-wave-lane]').count()) < 1) {
+          throw new Error('Expected parallel waves to name the lanes in each wave');
+        }
         if ((await page.locator('[data-batch-lane]').count()) < 1) {
           throw new Error('Expected parallel lane panel to name the current safe batch');
         }

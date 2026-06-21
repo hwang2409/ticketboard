@@ -1721,6 +1721,138 @@ button.unlock-item:focus-visible {
   font-size: 0.68rem;
 }
 
+.parallel-waves {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.65rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.parallel-waves-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.parallel-waves-head small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.parallel-wave-list {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.parallel-wave-list > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.parallel-wave {
+  display: grid;
+  grid-template-columns: minmax(0, 0.55fr) minmax(0, 1fr);
+  gap: 0.55rem;
+  align-items: start;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--line);
+  background: var(--surface-muted);
+}
+
+.parallel-wave-ready {
+  border-left-color: var(--green);
+}
+
+.parallel-wave-waiting {
+  border-left-color: var(--warning);
+}
+
+.parallel-wave-blocked {
+  border-left-color: var(--danger);
+}
+
+.parallel-wave-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.18rem;
+}
+
+.parallel-wave-copy strong,
+.parallel-wave-copy em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parallel-wave-copy strong {
+  font-size: 0.76rem;
+}
+
+.parallel-wave-copy em {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.parallel-wave-lanes {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+.parallel-wave-lane {
+  display: inline-grid;
+  max-width: 11rem;
+  min-height: 2rem;
+  align-content: center;
+  gap: 0.08rem;
+  padding: 0.28rem 0.45rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--foreground);
+  cursor: default;
+  line-height: 1.15;
+  text-align: left;
+}
+
+button.parallel-wave-lane {
+  cursor: pointer;
+}
+
+button.parallel-wave-lane:hover,
+button.parallel-wave-lane:focus-visible {
+  border-color: var(--foreground);
+}
+
+.parallel-wave-lane span,
+.parallel-wave-lane strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parallel-wave-lane span {
+  color: var(--muted);
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.parallel-wave-lane strong {
+  font-size: 0.68rem;
+}
+
 .parallel-batch {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2710,6 +2842,7 @@ button.plan-item {
   .handoff-item,
   .unlock-item,
   .parallel-lane,
+  .parallel-wave,
   .parallel-lane-select {
     grid-template-columns: 1fr;
   }
@@ -2733,6 +2866,24 @@ button.plan-item {
 
   .parallel-next-action > span {
     text-align: left;
+  }
+
+  .parallel-waves-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .parallel-waves-head small {
+    text-align: left;
+  }
+
+  .parallel-wave-copy strong,
+  .parallel-wave-copy em {
+    white-space: normal;
+  }
+
+  .parallel-wave-lanes {
+    justify-content: flex-start;
   }
 
   .project-pulse-head,

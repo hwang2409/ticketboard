@@ -320,6 +320,26 @@ type ParallelBatch = {
   title: string;
 };
 
+type ParallelWaveTone = 'blocked' | 'ready' | 'waiting';
+
+type ParallelWaveLane = ParallelBatchLane & {
+  reason: string;
+  status: ParallelBatchDecisionStatus;
+};
+
+type ParallelWave = {
+  detail: string;
+  id: string;
+  lanes: Array<ParallelWaveLane>;
+  title: string;
+  tone: ParallelWaveTone;
+};
+
+type ParallelWavePlan = {
+  items: Array<ParallelWave>;
+  summary: string;
+};
+
 type LaneMatrixTone = 'blocked' | 'ready' | 'waiting';
 
 type LaneMatrixItem = {
@@ -1631,6 +1651,7 @@ function ProjectPlanRail({
     unlockMap,
     workflows,
   });
+  const parallelWaves = parallelBatch ? buildParallelWaves(parallelBatch) : null;
   const livePlanPacket = buildLivePlanPacket({
     completionForecast,
     dashboard,
@@ -1639,6 +1660,7 @@ function ProjectPlanRail({
     laneLoad,
     parallelBatch,
     parallelPlan,
+    parallelWaves,
     plan,
     projectPulse,
     unlockMap,
@@ -2185,6 +2207,7 @@ function ParallelLanesPanel({
     lanes: plan.lanes,
     workflows,
   });
+  const waves = buildParallelWaves(batch);
 
   return (
     <section className="parallel-lanes" data-parallel-lanes={plan.source}>
@@ -2220,6 +2243,7 @@ function ParallelLanesPanel({
           )}
         </div>
       </div>
+      <ParallelWavesPanel onSelect={onSelect} waves={waves} />
       <div
         className="parallel-batch"
         data-guarded-count={batch.guardedCount}
@@ -2315,6 +2339,66 @@ function ParallelLanesPanel({
             workflows={workflows}
           />
         ))}
+      </div>
+    </section>
+  );
+}
+
+function ParallelWavesPanel({
+  onSelect,
+  waves,
+}: {
+  onSelect: (id: string) => void;
+  waves: ParallelWavePlan;
+}) {
+  return (
+    <section className="parallel-waves" data-parallel-waves>
+      <div className="parallel-waves-head">
+        <span className="section-kicker">Parallel waves</span>
+        <small>{waves.summary}</small>
+      </div>
+      <div className="parallel-wave-list">
+        {waves.items.length ? waves.items.map((wave) => (
+          <div
+            className={`parallel-wave parallel-wave-${wave.tone}`}
+            data-parallel-wave={wave.id}
+            key={wave.id}
+          >
+            <div className="parallel-wave-copy">
+              <strong>{wave.title}</strong>
+              <em>{wave.detail}</em>
+            </div>
+            <div className="parallel-wave-lanes">
+              {wave.lanes.map((lane) =>
+                lane.workflowId ? (
+                  <button
+                    className={`parallel-wave-lane parallel-role-${lane.role}`}
+                    data-parallel-wave-lane={lane.id}
+                    key={`${wave.id}:${lane.id}`}
+                    onClick={() => onSelect(lane.workflowId as string)}
+                    title={lane.reason}
+                    type="button"
+                  >
+                    <span>{batchDecisionLabel(lane)}</span>
+                    <strong>{lane.label}</strong>
+                  </button>
+                ) : (
+                  <span
+                    className={`parallel-wave-lane parallel-role-${lane.role}`}
+                    data-parallel-wave-lane={lane.id}
+                    key={`${wave.id}:${lane.id}`}
+                    title={lane.reason}
+                  >
+                    <span>{batchDecisionLabel(lane)}</span>
+                    <strong>{lane.label}</strong>
+                  </span>
+                ),
+              )}
+            </div>
+          </div>
+        )) : (
+          <p>No parallel wave order is visible.</p>
+        )}
       </div>
     </section>
   );
@@ -3593,6 +3677,107 @@ function parallelBatchFor({
       ? labels.join(' + ')
       : 'No lane is ready to run in parallel',
   };
+}
+
+function buildParallelWaves(batch: ParallelBatch): ParallelWavePlan {
+  const decisionsById = new Map(batch.decisions.map((decision) => [decision.id, decision]));
+  const currentWave = batch.lanes
+    .map((lane) => {
+      const decision = decisionsById.get(lane.id);
+      return decision
+        ? parallelWaveLane(decision)
+        : {
+            ...lane,
+            reason: 'Selected for the current batch.',
+            status: 'ready' as const,
+          };
+    });
+  const onDeck = batch.decisions
+    .filter((decision) => decision.status === 'waiting')
+    .filter((decision) => decision.role === 'parallel' || decision.role === 'cleanup')
+    .map(parallelWaveLane);
+  const checkpoints = batch.decisions
+    .filter((decision) => decision.status === 'waiting')
+    .filter((decision) => decision.role !== 'parallel' && decision.role !== 'cleanup')
+    .map(parallelWaveLane);
+  const guarded = batch.decisions
+    .filter((decision) => decision.status === 'guarded')
+    .map(parallelWaveLane);
+  const items: Array<ParallelWave> = [];
+
+  if (currentWave.length) {
+    items.push({
+      detail: 'Run these lanes together now; focus stays first and ready lanes fit current capacity.',
+      id: 'wave:now',
+      lanes: currentWave,
+      title: 'Wave 1 / run together',
+      tone: currentWave.some((lane) => lane.status === 'ready') ? 'ready' : 'waiting',
+    });
+  }
+  if (onDeck.length) {
+    items.push({
+      detail: 'Start these after a current slot clears; they are safe enough to queue next.',
+      id: 'wave:on-deck',
+      lanes: onDeck,
+      title: 'Wave 2 / on deck',
+      tone: 'ready',
+    });
+  }
+  if (checkpoints.length) {
+    items.push({
+      detail: 'These need a human checkpoint, review state, or watch decision before Codex work.',
+      id: 'wave:checkpoint',
+      lanes: checkpoints,
+      title: 'Checkpoint wave',
+      tone: 'waiting',
+    });
+  }
+  if (guarded.length) {
+    items.push({
+      detail: 'Do not start these beside the current batch until the guard reason is resolved.',
+      id: 'wave:guarded',
+      lanes: guarded,
+      title: 'Guarded / serialized',
+      tone: 'blocked',
+    });
+  }
+
+  return {
+    items,
+    summary: parallelWaveSummary({
+      guardedCount: guarded.length,
+      nowCount: currentWave.length,
+      onDeckCount: onDeck.length,
+    }),
+  };
+}
+
+function parallelWaveLane(decision: ParallelBatchDecision): ParallelWaveLane {
+  return {
+    id: decision.id,
+    label: decision.label,
+    reason: decision.reason,
+    role: decision.role,
+    status: decision.status,
+    workflowId: decision.workflowId,
+  };
+}
+
+function parallelWaveSummary({
+  guardedCount,
+  nowCount,
+  onDeckCount,
+}: {
+  guardedCount: number;
+  nowCount: number;
+  onDeckCount: number;
+}) {
+  const parts = [
+    nowCount ? `${moveCount(nowCount, 'lane')} now` : '',
+    onDeckCount ? `${moveCount(onDeckCount, 'lane')} on deck` : '',
+    guardedCount ? `${moveCount(guardedCount, 'lane')} guarded` : '',
+  ].filter(Boolean);
+  return parts.length ? parts.join(' / ') : 'No wave order visible';
 }
 
 function buildLaneMatrix({
@@ -5323,6 +5508,7 @@ function buildLivePlanPacket({
   laneLoad,
   parallelBatch,
   parallelPlan,
+  parallelWaves,
   plan,
   projectPulse,
   unlockMap,
@@ -5335,6 +5521,7 @@ function buildLivePlanPacket({
   laneLoad: LaneLoad;
   parallelBatch: ParallelBatch | null;
   parallelPlan: ParallelPlan | null;
+  parallelWaves: ParallelWavePlan | null;
   plan: ProjectPlan;
   projectPulse: ProjectPulse;
   unlockMap: UnlockMap;
@@ -5374,6 +5561,20 @@ function buildLivePlanPacket({
           ),
         ]
       : ['- Need at least two actionable lanes to compare.']),
+    '',
+    '## Parallel waves',
+    ...(parallelWaves?.items.length
+      ? [
+          `- ${parallelWaves.summary}`,
+          ...parallelWaves.items.flatMap((wave) => [
+            `- ${wave.title}: ${wave.detail}`,
+            ...wave.lanes.map(
+              (lane) =>
+                `  - ${batchDecisionLabel(lane)}: ${lane.label} - ${lane.reason}`,
+            ),
+          ]),
+        ]
+      : ['- No parallel wave order is visible.']),
     '',
     '## Unlock map',
     ...(unlockMap.items.length
