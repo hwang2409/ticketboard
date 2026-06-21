@@ -215,6 +215,7 @@ JSON_GZIP_MIN_BYTES = 4_096
 JSON_GZIP_COMPRESSLEVEL = 1
 DASHBOARD_SNAPSHOT_VERSION = 7
 WORKFLOW_ACTION_KINDS = {
+    "complete-cleanup",
     "focus-tmux",
     "launch-codex",
     "open-pr",
@@ -937,6 +938,20 @@ def run_workflow_action(
             output=output,
         )
 
+    if kind == "complete-cleanup":
+        anchor = require_cleanup_context(dashboard, payload)
+        workflow_id = str(payload.get("workflowId") or "").strip()
+        command = ["ticketboard", "cleanup", "complete", workflow_id]
+        return action_result(
+            command,
+            dry_run=dry_run,
+            message=(
+                f"Marked {anchor} cleanup handled. "
+                "No local files, worktrees, or tmux sessions were changed."
+            ),
+            output="",
+        )
+
     if kind == "resume-codex":
         thread_id = str(payload.get("threadId") or "").strip()
         require_known_session(dashboard, thread_id)
@@ -1402,13 +1417,18 @@ def known_urls(dashboard: dict[str, Any]) -> set[str]:
     return urls
 
 
-def require_known_path(dashboard: dict[str, Any], value: Any) -> Path:
+def require_known_path(
+    dashboard: dict[str, Any],
+    value: Any,
+    *,
+    must_exist: bool = True,
+) -> Path:
     if not value:
         raise ValueError("Missing path")
     path = Path(str(value)).expanduser().resolve(strict=False)
     if path not in known_paths(dashboard):
         raise ValueError("Unknown local path")
-    if not path.exists():
+    if must_exist and not path.exists():
         raise ValueError(f"Path does not exist: {path}")
     return path
 
@@ -1425,6 +1445,76 @@ def known_paths(dashboard: dict[str, Any]) -> set[Path]:
         if isinstance(session, dict) and session.get("cwd"):
             paths.add(Path(str(session["cwd"])).expanduser().resolve(strict=False))
     return paths
+
+
+def require_cleanup_context(dashboard: dict[str, Any], payload: dict[str, Any]) -> str:
+    workflow_id = str(payload.get("workflowId") or "").strip()
+    if not workflow_id:
+        raise ValueError("Missing workflow")
+
+    anchors: list[str] = []
+    if payload.get("path"):
+        path = require_known_path(dashboard, payload.get("path"), must_exist=False)
+        anchors.append(short_action_path(path))
+
+    thread_id = str(payload.get("threadId") or "").strip()
+    if thread_id:
+        require_known_session(dashboard, thread_id)
+        anchors.append(f"Codex {thread_id[:8]}")
+
+    session = str(payload.get("session") or "").strip()
+    has_index = payload.get("index") is not None and payload.get("index") != ""
+    if session or has_index:
+        if not session or not has_index:
+            raise ValueError("Incomplete tmux window")
+        index = int(payload.get("index"))
+        require_known_tmux_window(dashboard, session, index)
+        anchors.append(f"{session}:{index}")
+
+    if ticket_id := optional_ticket_id(payload):
+        require_known_ticket(dashboard, ticket_id)
+        anchors.append(ticket_id)
+
+    pr_number = optional_pr_number(payload)
+    if pr_number is not None:
+        require_known_pr(dashboard, pr_number)
+        anchors.append(f"PR #{pr_number}")
+
+    if not anchors:
+        anchors.extend(cleanup_context_from_workflow_id(dashboard, workflow_id))
+
+    if not anchors:
+        raise ValueError("Cleanup action needs a known Ticketboard source")
+    return anchors[0]
+
+
+def cleanup_context_from_workflow_id(
+    dashboard: dict[str, Any],
+    workflow_id: str,
+) -> list[str]:
+    if workflow_id.startswith("worktree:"):
+        path = require_known_path(
+            dashboard,
+            workflow_id.removeprefix("worktree:"),
+            must_exist=False,
+        )
+        return [short_action_path(path)]
+    if workflow_id.startswith("session:"):
+        thread_id = workflow_id.removeprefix("session:")
+        require_known_session(dashboard, thread_id)
+        return [f"Codex {thread_id[:8]}"]
+    if workflow_id.startswith("ticket:"):
+        ticket_id = workflow_id.removeprefix("ticket:").upper()
+        require_known_ticket(dashboard, ticket_id)
+        return [ticket_id]
+    if workflow_id.startswith("pr:"):
+        try:
+            pr_number = int(workflow_id.removeprefix("pr:"))
+        except ValueError:
+            return []
+        require_known_pr(dashboard, pr_number)
+        return [f"PR #{pr_number}"]
+    return []
 
 
 def require_no_duplicate_codex_lane(

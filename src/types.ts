@@ -493,6 +493,7 @@ export type WorkflowBriefResponse = {
 };
 
 export type WorkflowActionKind =
+  | 'complete-cleanup'
   | 'focus-tmux'
   | 'launch-codex'
   | 'open-pr'

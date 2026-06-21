@@ -263,6 +263,7 @@ async function verifyViewport({ width, height, screenshot }) {
     await page.waitForSelector('.workflow-handoff >> text=Now', { timeout: 10_000 });
     await page.waitForSelector('text=Done so far', { timeout: 10_000 });
     await verifyDryRunAction(page, dashboard);
+    await verifyCleanupCompleteAction(page, dashboard);
     await page.locator('.manual-fallbacks summary').click();
     await verifyCopyAction({
       button: page.locator('[data-testid="copy-packet"]').first(),
@@ -937,6 +938,31 @@ async function verifyDryRunAction(page, dashboard) {
   }
 }
 
+async function verifyCleanupCompleteAction(page, dashboard) {
+  const action = buildCleanupCompleteDryRunAction(dashboard);
+  if (!action) return;
+  const response = await page.request.post(`${baseUrl}/api/workflow-action`, {
+    data: {
+      ...action,
+      dryRun: true,
+      title: 'Verify cleanup',
+    },
+    headers: { 'content-type': 'application/json' },
+    timeout: API_TIMEOUT_MS,
+  });
+  if (!response.ok()) {
+    throw new Error(`Expected dry-run cleanup completion to pass, got ${response.status()}`);
+  }
+  const payload = await response.json();
+  if (
+    !payload.ok ||
+    !payload.dryRun ||
+    !String(payload.message ?? '').includes('No local files')
+  ) {
+    throw new Error('Expected cleanup completion to be a dry-run bookkeeping action');
+  }
+}
+
 async function verifyTokensPage({ width, height, screenshot }) {
   const page = await browser.newPage({ viewport: { width, height } });
   page.on('console', (message) => {
@@ -1040,6 +1066,58 @@ function buildDryRunAction(dashboard) {
     return {
       kind: 'open-worktree',
       path: worktree.path,
+    };
+  }
+
+  return null;
+}
+
+function buildCleanupCompleteDryRunAction(dashboard) {
+  const worktree = dashboard.worktrees.find((item) => item.path);
+  if (worktree) {
+    return {
+      kind: 'complete-cleanup',
+      path: worktree.path,
+      workflowId: `worktree:${worktree.path}`,
+    };
+  }
+
+  const session = dashboard.codexSessions.find((item) => item.threadId);
+  if (session) {
+    return {
+      kind: 'complete-cleanup',
+      threadId: session.threadId,
+      workflowId: `session:${session.threadId}`,
+    };
+  }
+
+  const window = dashboard.tmuxWindows.find(
+    (item) => item.session && typeof item.index === 'number',
+  );
+  if (window) {
+    return {
+      index: window.index,
+      kind: 'complete-cleanup',
+      session: window.session,
+      workflowId: `tmux:${window.session}:${window.index}`,
+    };
+  }
+
+  const ticket = dashboard.tickets.find((item) => item.ticketId);
+  if (ticket) {
+    return {
+      kind: 'complete-cleanup',
+      ticketId: ticket.ticketId,
+      workflowId: `ticket:${ticket.ticketId}`,
+    };
+  }
+
+  const pr = dashboard.prs.find((item) => typeof item.number === 'number');
+  if (pr) {
+    return {
+      kind: 'complete-cleanup',
+      prNumber: pr.number,
+      workflowId: `pr:${pr.number}`,
     };
   }
 

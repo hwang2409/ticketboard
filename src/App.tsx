@@ -1121,6 +1121,10 @@ function PrimaryWorkflow({
     () => buildWorkflowAction(workflow, dashboard, prompt),
     [dashboard, prompt, workflow],
   );
+  const cleanupCompleteAction = useMemo(
+    () => buildCleanupCompleteAction(workflow),
+    [workflow],
+  );
 
   return (
     <section
@@ -1154,6 +1158,15 @@ function PrimaryWorkflow({
               testId="copy-packet"
             />
           )}
+          {cleanupCompleteAction ? (
+            <WorkflowActionButton
+              action={cleanupCompleteAction}
+              className="ghost-button action-button cleanup-complete-button"
+              onActionComplete={onActionComplete}
+              testId="complete-cleanup-action"
+              title="Mark this cleanup lane handled without changing local files"
+            />
+          ) : null}
         </div>
       </div>
 
@@ -3869,6 +3882,7 @@ function capacityGuardForNewLane(laneLoad: LaneLoad): LaneActionGuard | null {
 
 function handoffKindLabel(kind: string) {
   const labels: Record<string, string> = {
+    'complete-cleanup': 'Marked cleanup',
     'focus-tmux': 'Focused',
     'launch-codex': 'Started Codex',
     'open-pr': 'Opened PR',
@@ -5681,6 +5695,31 @@ function buildWorkflowAction(
   }
 
   return null;
+}
+
+function buildCleanupCompleteAction(workflow: WorkflowItem): PlannedWorkflowAction | null {
+  if (workflow.intent !== 'clean') return null;
+  const primaryPr = workflow.prs[0] ?? null;
+  const primarySession = workflow.sessions[0] ?? null;
+  const primaryWorktree = workflow.worktrees[0] ?? null;
+  const window = workflow.windows[0] ?? null;
+  const ticketId = workflow.ticket?.ticketId ?? workflow.linearTicket?.ticketId;
+  return {
+    advanceOnSuccess: true,
+    label: 'Mark handled',
+    request: {
+      index: window?.index,
+      kind: 'complete-cleanup',
+      path: primaryWorktree?.path ?? primarySession?.cwd,
+      prNumber: primaryPr?.number,
+      session: window?.session,
+      threadId: primarySession?.threadId,
+      ticketId,
+      title: workflow.title,
+      workflowId: workflow.id,
+    },
+    runningLabel: 'Marking handled',
+  };
 }
 
 function buildActionPrompt(workflow: WorkflowItem, prompt: string) {
