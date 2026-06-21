@@ -3,9 +3,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
-  closeSync,
   mkdirSync,
-  openSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
@@ -60,7 +58,7 @@ if (dryRun) {
     fingerprintPath,
     promptPath,
     promptTransport: 'argv',
-    terminalTransport: codexTerminalTransportName(),
+    stdinTransport: codexStdinTransportName(),
     snapshotPath,
   }, null, 2));
   process.exit(0);
@@ -116,19 +114,13 @@ function hasOption(values, option) {
 }
 
 function runCodexCommand(command) {
-  if (process.stdin.isTTY) {
-    return spawnCommand(command, 'inherit');
+  const direct = spawnBuffered(command);
+  if (direct.status === 0 || !shouldRetryWithPty(direct)) {
+    replayBuffered(direct);
+    return direct;
   }
 
-  const tty = controllingTty();
-  if (tty) {
-    try {
-      return spawnCommand(command, tty.fd);
-    } finally {
-      tty.close();
-    }
-  }
-
+  console.error('[brief:codex] Codex rejected non-terminal stdin; retrying in a local pseudo-terminal.');
   const pty = ptyCommand(command);
   if (pty) {
     const result = spawnSync(pty.bin, pty.args, {
@@ -141,16 +133,34 @@ function runCodexCommand(command) {
 
   return {
     error: new Error(
-      'Codex requires terminal stdin, but Ticketboard could not open /dev/tty or create a pseudo-terminal with script(1).',
+      'Codex requires terminal stdin, but Ticketboard could not create a pseudo-terminal with script(1).',
     ),
     status: 1,
   };
 }
 
-function spawnCommand(command, stdin) {
+function spawnBuffered(command) {
   return spawnSync(command[0], command.slice(1), {
-    stdio: [stdin, 'inherit', 'inherit'],
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
+}
+
+function replayBuffered(result) {
+  if (result.stdout) {
+    process.stdout.write(result.stdout);
+  }
+  if (result.stderr) {
+    process.stderr.write(result.stderr);
+  }
+}
+
+function shouldRetryWithPty(result) {
+  if (result.error || result.status === 0) {
+    return false;
+  }
+  return /stdin is not a terminal|not a terminal/i.test(result.stderr || '');
 }
 
 function ptyCommand(command) {
@@ -180,35 +190,13 @@ function shellQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function controllingTty() {
-  try {
-    const fd = openSync('/dev/tty', 'r');
-    return {
-      close() {
-        closeSync(fd);
-      },
-      fd,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function codexTerminalTransportName() {
-  if (process.stdin.isTTY) {
-    return 'inherit';
-  }
-  const tty = controllingTty();
-  if (tty) {
-    tty.close();
-    return '/dev/tty';
-  }
+function codexStdinTransportName() {
   if (process.platform !== 'win32') {
     return process.platform === 'darwin' || process.platform.endsWith('bsd')
-      ? 'script-bsd-pty'
-      : 'script-linux-pty';
+      ? 'noninteractive-with-script-bsd-pty-fallback'
+      : 'noninteractive-with-script-linux-pty-fallback';
   }
-  return 'unavailable';
+  return 'noninteractive';
 }
 
 function withPrompt(command, promptValue) {
