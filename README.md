@@ -20,6 +20,7 @@ It is designed to answer one question quickly: **what should own focus, what can
 - Shows a lane matrix for which ticket pairs can run together, need guards, or must serialize.
 - Turns the safe-batch decision trail into ordered parallel waves: run together now, on deck, checkpoints, and guarded work.
 - Names the current safe batch of lanes that can run together without changed-file conflicts.
+- Serializes safe batches when Linear relations show one ticket blocks another.
 - Explains why each parallel lane is ready, guarded, or waiting in the batch decision trail.
 - Copies a safe-batch packet with run-now lanes, decision trail, and guardrails.
 - Revalidates live dashboard and brief state before running every currently safe automated lane in the batch.

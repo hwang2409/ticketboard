@@ -18,6 +18,7 @@ try {
     screenshot: '/tmp/ticketboard-simple-mobile.png',
     width: 390,
   });
+  await verifyDependencyGuardedBatch();
   await verifyTokensPage({
     height: 900,
     screenshot: '/tmp/ticketboard-tokens.png',
@@ -365,6 +366,86 @@ async function verifyViewport({ width, height, screenshot }) {
   await page.close();
 }
 
+async function verifyDependencyGuardedBatch() {
+  const dashboard = mockDependencyDashboard();
+  const workflowBrief = mockDependencyBrief(dashboard.generatedAt);
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  page.on('console', (message) => {
+    if (message.type() === 'error') {
+      errors.push(message.text());
+    }
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+
+  await page.route('**/api/dashboard**', async (route) => {
+    await route.fulfill({
+      body: JSON.stringify(dashboard),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+  await page.route('**/api/workflow-brief**', async (route) => {
+    const url = new globalThis.URL(route.request().url());
+    if (url.pathname.endsWith('/refresh-request')) {
+      await route.fulfill({
+        body: JSON.stringify({ active: false, path: '/tmp/ticketboard-dependency.refresh' }),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    if (url.pathname.endsWith('/evidence-snapshot')) {
+      await route.fulfill({
+        body: JSON.stringify(mockDependencyEvidenceSnapshot(workflowBrief)),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    await route.fulfill({
+      body: JSON.stringify(workflowBrief),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+  await mockUserStateRoutes(page);
+
+  try {
+    await page.goto(`${baseUrl}/?dependency-guard=${Date.now()}`, {
+      timeout: API_TIMEOUT_MS,
+      waitUntil: 'domcontentloaded',
+    });
+    await page.waitForSelector('[data-app-ready="true"]', { timeout: 20_000 });
+    await page.waitForSelector('[data-parallel-batch]', { timeout: 10_000 });
+
+    const guarded = page.locator('[data-batch-decision-status="guarded"]');
+    if ((await guarded.count()) < 1) {
+      throw new Error('Expected dependency-blocked parallel lane to render a guarded batch decision');
+    }
+    const guardedText = await guarded.allInnerTexts();
+    const dependencyGuardText = guardedText.join('\n');
+    for (const phrase of ['DEP-1', 'DEP-2']) {
+      if (!dependencyGuardText.includes(phrase)) {
+        throw new Error(`Expected guarded dependency decision to include ${phrase}`);
+      }
+    }
+    if (!/blocks|serialize/i.test(dependencyGuardText)) {
+      throw new Error(`Expected guarded dependency decision to explain serialization, got "${dependencyGuardText}"`);
+    }
+    if ((await page.locator('[data-testid="run-safe-batch"]').count()) > 0) {
+      throw new Error('Expected dependency-guarded batch to hide the safe-batch runner');
+    }
+
+    await page.waitForSelector('[data-lane-matrix-item]', { timeout: 10_000 });
+    const matrixText = await page.locator('[data-lane-matrix]').innerText();
+    if (!/Linear dependency|DEP-1 blocks DEP-2/i.test(matrixText)) {
+      throw new Error(`Expected lane matrix to expose Linear dependency serialization, got "${matrixText}"`);
+    }
+  } finally {
+    await page.close();
+  }
+}
+
 async function mockUserStateRoutes(page) {
   const state = {
     dismissed: {},
@@ -446,6 +527,265 @@ async function mockUserStateRoutes(page) {
 
     await route.continue();
   });
+}
+
+function mockDependencyDashboard() {
+  const now = new Date().toISOString();
+  return {
+    codexSessions: [],
+    diagnostics: [],
+    generatedAt: now,
+    linearTickets: [
+      mockLinearTicket({
+        relatedIssues: [
+          {
+            issue: mockLinkedIssue({
+              stateName: 'Todo',
+              stateType: 'unstarted',
+              ticketId: 'DEP-2',
+              title: 'Build dependent workflow',
+            }),
+            relationType: 'blocks',
+          },
+        ],
+        stateName: 'In Progress',
+        stateType: 'started',
+        ticketId: 'DEP-1',
+        title: 'Build dependency first',
+      }),
+      mockLinearTicket({
+        relatedIssues: [],
+        stateName: 'Todo',
+        stateType: 'unstarted',
+        ticketId: 'DEP-2',
+        title: 'Build dependent workflow',
+      }),
+    ],
+    prs: [],
+    repo: {
+      nameWithOwner: 'you/project',
+      path: '/tmp/ticketboard-dependency-project',
+      url: 'https://github.com/you/project',
+    },
+    scope: {
+      githubLogin: 'you',
+      linearOwners: ['you'],
+    },
+    tickets: [
+      mockTicketRow({
+        nextAction: 'Finish the dependency lane first.',
+        state: 'active',
+        ticketId: 'DEP-1',
+        title: 'Build dependency first',
+      }),
+      mockTicketRow({
+        nextAction: 'Start the dependent lane only after DEP-1 clears.',
+        state: 'active',
+        ticketId: 'DEP-2',
+        title: 'Build dependent workflow',
+      }),
+    ],
+    tmuxWindows: [],
+    worktrees: [],
+  };
+}
+
+function mockDependencyBrief(dashboardGeneratedAt) {
+  const now = new Date().toISOString();
+  return {
+    ageSeconds: 5,
+    automation: {
+      briefTtlSeconds: 600,
+      evidenceFingerprint: 'dependency-fingerprint',
+      fingerprintPath: '/tmp/ticketboard-dependency.fingerprint.json',
+      fingerprintStatus: 'fresh',
+      fingerprintUpdatedAt: now,
+      intervalSeconds: 600,
+      lockActive: false,
+      lockAgeSeconds: null,
+      lockPath: '/tmp/ticketboard-dependency.lock',
+      lockStale: false,
+      lockTtlSeconds: 1800,
+      refreshRequest: {
+        active: false,
+        path: '/tmp/ticketboard-dependency.refresh',
+      },
+      snapshotPath: '/tmp/ticketboard-dependency-snapshot.json',
+    },
+    brief: {
+      blocked: [],
+      generatedAt: now,
+      lanes: [
+        {
+          action: 'Work on the dependency first.',
+          automation: 'Human checkpoint',
+          confidence: 'high',
+          evidence: ['DEP-1 blocks DEP-2'],
+          laneId: 'focus:DEP-1',
+          parallelSafe: true,
+          role: 'focus',
+          status: 'Focus',
+          ticketId: 'DEP-1',
+          title: 'Build dependency first',
+          workflowId: 'ticket:DEP-1',
+          why: 'It unlocks the dependent lane.',
+        },
+        {
+          action: 'Start the dependent lane.',
+          automation: 'Start Codex lane',
+          confidence: 'high',
+          evidence: ['Brief says safe, Linear says blocked'],
+          laneId: 'parallel:DEP-2',
+          parallelSafe: true,
+          role: 'parallel',
+          status: 'Brief-safe',
+          ticketId: 'DEP-2',
+          title: 'Build dependent workflow',
+          workflowId: 'ticket:DEP-2',
+          why: 'This should be serialized by Linear dependency data.',
+        },
+      ],
+      next: [],
+      notes: [],
+      now: {
+        action: 'Work on the dependency first.',
+        confidence: 'high',
+        evidence: ['DEP-1 blocks DEP-2'],
+        finishedWhen: 'DEP-1 is completed or handed off.',
+        ticketId: 'DEP-1',
+        title: 'Build dependency first',
+        workflowId: 'ticket:DEP-1',
+        why: 'It blocks DEP-2.',
+      },
+      operatingMode: {
+        maxActiveLanes: 3,
+        rationale: 'The dependent lane should not run until its blocker clears.',
+        recommendedActiveLanes: 3,
+        summary: 'Run only unblocked dependency work.',
+      },
+      source: {
+        dashboardGeneratedAt,
+        evidenceFingerprint: 'dependency-fingerprint',
+        evidenceSnapshotPath: '/tmp/ticketboard-dependency-snapshot.json',
+        planDocPath: null,
+        planDocPaths: [],
+      },
+      staleSignals: [],
+      version: 1,
+    },
+    path: '/tmp/ticketboard-dependency-brief.json',
+    reason: null,
+    status: 'ready',
+    ttlSeconds: 600,
+  };
+}
+
+function mockDependencyEvidenceSnapshot(workflowBrief) {
+  return {
+    briefPath: workflowBrief.path,
+    fingerprint: 'dependency-fingerprint',
+    path: '/tmp/ticketboard-dependency-snapshot.json',
+    snapshot: {
+      parallelRuns: [],
+      planDocs: [],
+      planningSignals: {
+        docs: [],
+        sections: [],
+        ticketIds: ['DEP-1', 'DEP-2'],
+      },
+      prs: [],
+      recentHandoffs: [],
+      refreshRequest: {
+        active: false,
+        path: '/tmp/ticketboard-dependency.refresh',
+      },
+      sourceDossiers: [],
+      verification: {
+        commands: {
+          git: [],
+          github: [],
+          tmux: [],
+        },
+        mcpHints: [],
+      },
+    },
+  };
+}
+
+function mockTicketRow({
+  nextAction,
+  state,
+  ticketId,
+  title,
+}) {
+  return {
+    branches: [],
+    nextAction,
+    prNumbers: [],
+    risk: 'medium',
+    state,
+    ticketId,
+    title,
+    windows: [],
+    worktrees: [],
+  };
+}
+
+function mockLinearTicket({
+  relatedIssues,
+  stateName,
+  stateType,
+  ticketId,
+  title,
+}) {
+  const now = new Date().toISOString();
+  return {
+    activity: [],
+    assignee: 'you',
+    assigneeEmail: null,
+    assigneeId: null,
+    assigneeName: 'you',
+    attachments: [],
+    branchName: null,
+    children: [],
+    comments: [],
+    completedAt: null,
+    createdAt: now,
+    creator: null,
+    cycleName: null,
+    description: `${title}.`,
+    detailLevel: 'full',
+    dueDate: null,
+    labels: [],
+    parent: null,
+    priority: 2,
+    projectName: 'Dependency Project',
+    projectUrl: 'https://linear.app/example/project/dependency-project',
+    relatedIssues,
+    startedAt: stateType === 'started' ? now : null,
+    stateName,
+    stateType,
+    teamName: 'Engineering',
+    ticketId,
+    title,
+    updatedAt: now,
+    url: `https://linear.app/example/issue/${ticketId}`,
+  };
+}
+
+function mockLinkedIssue({
+  stateName,
+  stateType,
+  ticketId,
+  title,
+}) {
+  return {
+    stateName,
+    stateType,
+    ticketId,
+    title,
+    url: `https://linear.app/example/issue/${ticketId}`,
+  };
 }
 
 function parseJsonRequest(request) {

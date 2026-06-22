@@ -3912,12 +3912,19 @@ function nextSafeLaneAction({
   lanes: Array<ParallelLane>;
   workflows: Array<WorkflowItem>;
 }): RunnableLaneAction | null {
+  const focusLane = lanes.find((lane) => lane.role === 'focus') ?? null;
+  const focusWorkflow = focusLane?.workflowId
+    ? workflows.find((candidate) => candidate.id === focusLane.workflowId) ?? null
+    : null;
+  const dependencyEdges = workflows.flatMap((workflow) => workflowDependencyEdges(workflow));
   for (const lane of lanes) {
     if (lane.role !== 'parallel' && lane.role !== 'cleanup') continue;
     if (lane.safety.level !== 'safe') continue;
     const workflow = lane.workflowId
       ? workflows.find((candidate) => candidate.id === lane.workflowId) ?? null
       : null;
+    if (!workflow || unresolvedWorkflowBlocker(workflow, dependencyEdges)) continue;
+    if (focusWorkflow && workflowDependencyConflict(workflow, focusWorkflow)) continue;
     const laneAction = laneActionFor({ dashboard, lane, laneLoad, workflow });
     if (
       laneAction?.guard.runnable &&
@@ -3978,11 +3985,17 @@ function parallelBatchFor({
   workflows: Array<WorkflowItem>;
 }): ParallelBatch {
   const focusLane = lanes.find((lane) => lane.role === 'focus') ?? null;
+  const workflowById = new Map(workflows.map((workflow) => [workflow.id, workflow]));
+  const focusWorkflow = focusLane?.workflowId
+    ? workflowById.get(focusLane.workflowId) ?? null
+    : null;
+  const dependencyEdges = workflows.flatMap((workflow) => workflowDependencyEdges(workflow));
   const extraSlots = Math.max(0, recommendedActive - laneLoad.activeCount);
   const decisions: Array<ParallelBatchDecision> = [];
   const selected: Array<{
     lane: ParallelLane;
     paths: Array<string>;
+    workflow: WorkflowItem;
   }> = [];
   let guardedCount = 0;
 
@@ -3997,15 +4010,43 @@ function parallelBatchFor({
       continue;
     }
     const workflow = lane.workflowId
-      ? workflows.find((candidate) => candidate.id === lane.workflowId) ?? null
+      ? workflowById.get(lane.workflowId) ?? null
       : null;
-    const laneAction = laneActionFor({ dashboard, lane, laneLoad, workflow });
 
     if (lane.safety.level !== 'safe') {
       guardedCount += 1;
       decisions.push(batchDecision(lane, 'guarded', lane.safety.detail));
       continue;
     }
+
+    if (!workflow) {
+      guardedCount += 1;
+      decisions.push(batchDecision(lane, 'waiting', 'No workflow is mapped for this lane.'));
+      continue;
+    }
+
+    const unresolvedBlocker = unresolvedWorkflowBlocker(workflow, dependencyEdges);
+    if (unresolvedBlocker) {
+      guardedCount += 1;
+      decisions.push(batchDecision(lane, 'guarded', unresolvedBlocker.reason));
+      continue;
+    }
+
+    const dependencyConflict = batchDependencyConflictReason(
+      lane,
+      workflow,
+      [
+        ...(focusLane && focusWorkflow ? [{ lane: focusLane, workflow: focusWorkflow }] : []),
+        ...selected,
+      ],
+    );
+    if (dependencyConflict) {
+      guardedCount += 1;
+      decisions.push(batchDecision(lane, 'guarded', dependencyConflict));
+      continue;
+    }
+
+    const laneAction = laneActionFor({ dashboard, lane, laneLoad, workflow });
 
     if (!laneAction) {
       guardedCount += 1;
@@ -4040,11 +4081,11 @@ function parallelBatchFor({
     }
 
     if (selected.length < extraSlots) {
-      selected.push({ lane, paths });
+      selected.push({ lane, paths, workflow });
       decisions.push(batchDecision(
         lane,
         'ready',
-        'Fits the open Codex lane budget and has no changed-file conflict.',
+        'Fits the open Codex lane budget with no changed-file or Linear dependency conflict.',
       ));
       continue;
     }
@@ -4260,11 +4301,23 @@ function laneMatrixItem({
 
   const leftPaths = changedPathsForLane(left, leftWorkflow);
   const rightPaths = changedPathsForLane(right, rightWorkflow);
+  const dependency = workflowDependencyConflict(leftWorkflow, rightWorkflow);
   const overlap = intersectPaths(leftPaths, rightPaths);
   const leftZones = changedPathZones(leftPaths);
   const rightZones = changedPathZones(rightPaths);
   const sharedZones = intersectPaths(leftZones, rightZones);
   const title = `${matrixLaneLabel(left)} + ${matrixLaneLabel(right)}`;
+
+  if (dependency) {
+    return {
+      detail: dependency.reason,
+      id: `matrix:${left.id}:${right.id}:dependency`,
+      meta: 'Linear dependency',
+      title,
+      tone: 'blocked',
+      workflowIds: [left.workflowId, right.workflowId],
+    };
+  }
 
   if (overlap.length) {
     return {
@@ -4325,6 +4378,85 @@ function changedPathsForLane(
 ) {
   const workflowPaths = workflow ? workflowChangedPaths(workflow) : [];
   return workflowPaths.length ? workflowPaths : lane.safety.paths;
+}
+
+function unresolvedWorkflowBlocker(
+  workflow: WorkflowItem,
+  edges = workflowDependencyEdges(workflow),
+) {
+  const ticketIds = workflowTicketIds(workflow);
+  if (!ticketIds.size) return null;
+  for (const edge of edges) {
+    const blockedId = edge.blocked.ticketId.toUpperCase();
+    const blockerId = edge.blocker.ticketId.toUpperCase();
+    if (
+      ticketIds.has(blockedId) &&
+      !ticketIds.has(blockerId) &&
+      !isLinearIssueDone(edge.blocker)
+    ) {
+      return {
+        blockerId: edge.blocker.ticketId,
+        reason: `${edge.blocker.ticketId} blocks ${edge.blocked.ticketId}; finish or re-plan that dependency before starting this lane.`,
+      };
+    }
+  }
+  return null;
+}
+
+function batchDependencyConflictReason(
+  lane: ParallelLane,
+  workflow: WorkflowItem,
+  selected: Array<{ lane: ParallelLane; workflow: WorkflowItem }>,
+) {
+  for (const item of selected) {
+    const conflict = workflowDependencyConflict(workflow, item.workflow);
+    if (conflict) {
+      return `${batchLaneLabel(lane)} must serialize with ${batchLaneLabel(item.lane)}; ${conflict.reason}`;
+    }
+  }
+  return null;
+}
+
+function workflowDependencyConflict(
+  left: WorkflowItem,
+  right: WorkflowItem,
+) {
+  const leftIds = workflowTicketIds(left);
+  const rightIds = workflowTicketIds(right);
+  const edges = [
+    ...workflowDependencyEdges(left),
+    ...workflowDependencyEdges(right),
+  ];
+  for (const edge of edges) {
+    if (isLinearIssueDone(edge.blocker)) continue;
+    const blockedId = edge.blocked.ticketId.toUpperCase();
+    const blockerId = edge.blocker.ticketId.toUpperCase();
+    const leftOwnsBlocked = leftIds.has(blockedId);
+    const rightOwnsBlocked = rightIds.has(blockedId);
+    const leftOwnsBlocker = leftIds.has(blockerId);
+    const rightOwnsBlocker = rightIds.has(blockerId);
+    if (
+      (leftOwnsBlocked && rightOwnsBlocker) ||
+      (rightOwnsBlocked && leftOwnsBlocker)
+    ) {
+      return {
+        blockedId: edge.blocked.ticketId,
+        blockerId: edge.blocker.ticketId,
+        reason: `${edge.blocker.ticketId} blocks ${edge.blocked.ticketId}.`,
+      };
+    }
+  }
+  return null;
+}
+
+function workflowDependencyEdges(workflow: WorkflowItem) {
+  const ticket = workflow.linearTicket;
+  if (!ticket) return [];
+  return ticket.relatedIssues
+    .map((relation) => unlockEdgeFromRelation(ticket, relation))
+    .filter((edge): edge is NonNullable<ReturnType<typeof unlockEdgeFromRelation>> =>
+      Boolean(edge),
+    );
 }
 
 function batchLaneLabel(lane: ParallelLane) {
