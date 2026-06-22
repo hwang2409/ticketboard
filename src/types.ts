@@ -470,6 +470,74 @@ export type WorkflowBrief = {
   notes?: Array<string>;
 };
 
+export type ParallelReadinessEdge = {
+  blockedId: string;
+  blockedStateName?: string | null;
+  blockedStateType?: string | null;
+  blockedTitle?: string | null;
+  blockerId: string;
+  blockerStateName?: string | null;
+  blockerStateType?: string | null;
+  blockerTitle?: string | null;
+  relationType: string;
+  sourceTicketId: string;
+};
+
+export type ParallelReadinessCandidate = {
+  activeLane: boolean;
+  activeReasons: Array<string>;
+  blockedBy: Array<ParallelReadinessEdge>;
+  blocks: Array<ParallelReadinessEdge>;
+  changedPaths: Array<string>;
+  changedZones: Array<string>;
+  cycleName?: string | null;
+  nextAction?: string | null;
+  priority?: number | null;
+  projectName?: string | null;
+  prNumbers: Array<number>;
+  risk?: string | null;
+  state?: string | null;
+  stateName?: string | null;
+  stateType?: string | null;
+  status: string;
+  ticketIds: Array<string>;
+  title?: string | null;
+  updatedAt?: string | null;
+  workflowId: string;
+};
+
+export type ParallelReadinessPair = {
+  leftWorkflowId: string;
+  overlapPaths?: Array<string>;
+  reason: string;
+  rightWorkflowId: string;
+  sharedZones?: Array<string>;
+  status: 'blocked' | 'guarded' | 'safe' | string;
+  type: string;
+};
+
+export type ParallelReadinessWave = {
+  id: string;
+  reason: string;
+  title: string;
+  workflowIds: Array<string>;
+};
+
+export type ParallelReadiness = {
+  blockerEdges: Array<ParallelReadinessEdge>;
+  candidateCount: number;
+  candidates: Array<ParallelReadinessCandidate>;
+  laneLoad: {
+    activeCount: number;
+    maxActiveLanes: number;
+    openSlots: number;
+    recommendedActiveLanes: number;
+  };
+  pairwise: Array<ParallelReadinessPair>;
+  suggestedWaves: Array<ParallelReadinessWave>;
+  summary: string;
+};
+
 export type WorkflowBriefResponse = {
   status: 'invalid' | 'missing' | 'ready' | 'stale';
   brief: WorkflowBrief | null;
@@ -477,6 +545,7 @@ export type WorkflowBriefResponse = {
   reason: string | null;
   ttlSeconds?: number | null;
   ageSeconds?: number | null;
+  parallelReadiness?: ParallelReadiness | null;
   automation?: {
     briefTtlSeconds: number;
     evidenceFingerprint: string | null;

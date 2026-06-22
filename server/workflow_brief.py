@@ -213,6 +213,7 @@ def workflow_brief_status(
 ) -> dict[str, Any]:
     path = workflow_brief_path(settings)
     automation = workflow_automation_status(path)
+    parallel_readiness = summarize_parallel_readiness(dashboard)
     payload = read_json(path)
     if payload is None:
         return {
@@ -221,6 +222,7 @@ def workflow_brief_status(
             "path": str(path),
             "ageSeconds": None,
             "automation": automation,
+            "parallelReadiness": parallel_readiness,
             "ttlSeconds": workflow_brief_ttl_seconds(),
             "reason": "No workflow brief has been generated yet.",
         }
@@ -233,6 +235,7 @@ def workflow_brief_status(
             "path": str(path),
             "ageSeconds": None,
             "automation": automation,
+            "parallelReadiness": parallel_readiness,
             "ttlSeconds": workflow_brief_ttl_seconds(),
             "reason": reason,
         }
@@ -245,6 +248,7 @@ def workflow_brief_status(
             "path": str(path),
             "ageSeconds": age_seconds,
             "automation": automation,
+            "parallelReadiness": parallel_readiness,
             "ttlSeconds": workflow_brief_ttl_seconds(),
             "reason": "The workflow brief is older than the configured TTL.",
         }
@@ -257,6 +261,7 @@ def workflow_brief_status(
             "path": str(path),
             "ageSeconds": age_seconds,
             "automation": automation,
+            "parallelReadiness": parallel_readiness,
             "ttlSeconds": workflow_brief_ttl_seconds(),
             "reason": f"The selected target {target_id} is not visible anymore.",
         }
@@ -267,6 +272,7 @@ def workflow_brief_status(
         "path": str(path),
         "ageSeconds": age_seconds,
         "automation": automation,
+        "parallelReadiness": parallel_readiness,
         "ttlSeconds": workflow_brief_ttl_seconds(),
         "reason": None,
     }

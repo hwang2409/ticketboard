@@ -23,6 +23,7 @@ import type {
   DashboardData,
   LinearLinkedIssueSummary,
   LinearTicketSummary,
+  ParallelReadiness,
   TokenUsageSummary,
   PullRequestSummary,
   TicketRow,
@@ -898,6 +899,7 @@ export function App() {
                 query={query}
                 selectedWorkflowId={selectedWorkflow.id}
                 visibleWorkflows={visibleWorkflows}
+                workflowBriefStatus={briefState.data}
                 workflows={workflows}
               />
             </div>
@@ -1751,6 +1753,7 @@ function ProjectPlanRail({
   query,
   selectedWorkflowId,
   visibleWorkflows,
+  workflowBriefStatus,
   workflows,
 }: {
   dashboard: DashboardData;
@@ -1770,6 +1773,7 @@ function ProjectPlanRail({
   query: string;
   selectedWorkflowId: string;
   visibleWorkflows: Array<WorkflowItem>;
+  workflowBriefStatus: WorkflowBriefResponse | null;
   workflows: Array<WorkflowItem>;
 }) {
   const laneLoad = buildLaneLoad({ parallelPlan, workflows });
@@ -1813,6 +1817,7 @@ function ProjectPlanRail({
     projectPulse,
     projectRunway,
     unlockMap,
+    workflowBriefStatus,
     workflows,
   });
 
@@ -6604,6 +6609,7 @@ function buildLivePlanPacket({
   projectPulse,
   projectRunway,
   unlockMap,
+  workflowBriefStatus,
   workflows,
 }: {
   completionForecast: CompletionForecast;
@@ -6619,9 +6625,11 @@ function buildLivePlanPacket({
   projectPulse: ProjectPulse;
   projectRunway: ProjectRunway;
   unlockMap: UnlockMap;
+  workflowBriefStatus: WorkflowBriefResponse | null;
   workflows: Array<WorkflowItem>;
 }) {
   const workflowById = new Map(workflows.map((workflow) => [workflow.id, workflow]));
+  const readiness = workflowBriefStatus?.parallelReadiness ?? null;
 
   return [
     '# Ticketboard live plan packet',
@@ -6674,6 +6682,9 @@ function buildLivePlanPacket({
           ]),
         ]
       : ['- No parallel wave order is visible.']),
+    '',
+    '## Automation readiness',
+    ...parallelReadinessPacketLines(readiness, workflowById),
     '',
     '## Unlock map',
     ...(unlockMap.items.length
@@ -6729,6 +6740,70 @@ function buildLivePlanPacket({
     '- Treat capacity, dirty worktrees, and active Codex sessions as real lane load.',
     '- After each PR merge, push, blocker, cleanup, or Codex handoff, refresh Ticketboard and regenerate this packet.',
   ].join('\n');
+}
+
+function parallelReadinessPacketLines(
+  readiness: ParallelReadiness | null,
+  workflowById: Map<string, WorkflowItem>,
+) {
+  if (!readiness) {
+    return ['- No backend parallel-readiness evidence is attached to this brief status.'];
+  }
+
+  const laneLoad = readiness.laneLoad;
+  const guardedPairs = readiness.pairwise
+    .filter((pair) => pair.status !== 'safe')
+    .slice(0, 8);
+  const candidates = readiness.candidates.slice(0, 8);
+  const waves = readiness.suggestedWaves.slice(0, 2);
+
+  return [
+    `- ${readiness.summary}`,
+    `- Lane load: ${moveCount(laneLoad.activeCount, 'active lane')}; ${moveCount(laneLoad.openSlots, 'open slot')}; capacity ${laneLoad.recommendedActiveLanes}/${laneLoad.maxActiveLanes}`,
+    ...(waves.length
+      ? waves.flatMap((wave) => [
+          `- ${wave.title}: ${wave.reason}`,
+          ...(wave.workflowIds.length
+            ? [`  - ${wave.workflowIds.map((id) => packetWorkflowLabel(id, workflowById)).join(', ')}`]
+            : []),
+        ])
+      : ['- No suggested backend wave is visible.']),
+    ...(readiness.blockerEdges.length
+      ? readiness.blockerEdges.slice(0, 6).map(
+          (edge) =>
+            `- Blocker: ${edge.blockerId} blocks ${edge.blockedId}${edge.blockedTitle ? ` (${edge.blockedTitle})` : ''}`,
+        )
+      : ['- No Linear blocker edges are visible.']),
+    ...(guardedPairs.length
+      ? guardedPairs.map(
+          (pair) =>
+            `- ${readableTitle(pair.status)} pair: ${packetWorkflowLabel(pair.leftWorkflowId, workflowById)} + ${packetWorkflowLabel(pair.rightWorkflowId, workflowById)} - ${pair.reason}`,
+        )
+      : ['- No guarded pairwise conflicts are visible.']),
+    ...(candidates.length
+      ? candidates.map((candidate) =>
+          [
+            `- Candidate: ${packetWorkflowLabel(candidate.workflowId, workflowById)}`,
+            candidate.status ? `status ${candidate.status}` : '',
+            candidate.projectName ? `project ${candidate.projectName}` : '',
+            candidate.changedZones.length ? `zones ${candidate.changedZones.slice(0, 3).join(', ')}` : '',
+            candidate.blockedBy.length ? `blocked by ${candidate.blockedBy.map((edge) => edge.blockerId).join(', ')}` : '',
+          ]
+            .filter(Boolean)
+            .join('; '),
+        )
+      : ['- No backend parallel candidates are visible.']),
+  ];
+}
+
+function packetWorkflowLabel(
+  workflowId: string,
+  workflowById: Map<string, WorkflowItem>,
+) {
+  const workflow = workflowById.get(workflowId);
+  if (!workflow) return workflowId;
+  const ticketId = workflow.ticket?.ticketId ?? workflow.linearTicket?.ticketId;
+  return ticketId ? `${ticketId}: ${workflow.title}` : workflow.title;
 }
 
 function planSectionPacketLines(section: ProjectPlanSection) {

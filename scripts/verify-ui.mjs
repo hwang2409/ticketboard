@@ -125,6 +125,7 @@ async function verifyViewport({ width, height, screenshot }) {
         '## Project runway',
         '## Lane matrix',
         '## Parallel waves',
+        '## Automation readiness',
         '## After focus clears',
         '## Parallel lanes',
         '## Parallel run memory',
@@ -673,6 +674,7 @@ function mockDependencyBrief(dashboardGeneratedAt) {
       staleSignals: [],
       version: 1,
     },
+    parallelReadiness: mockDependencyParallelReadiness(),
     path: '/tmp/ticketboard-dependency-brief.json',
     reason: null,
     status: 'ready',
@@ -687,77 +689,7 @@ function mockDependencyEvidenceSnapshot(workflowBrief) {
     path: '/tmp/ticketboard-dependency-snapshot.json',
     snapshot: {
       parallelRuns: [],
-      parallelReadiness: {
-        blockerEdges: [
-          {
-            blockedId: 'DEP-2',
-            blockedStateName: 'Todo',
-            blockedStateType: 'unstarted',
-            blockedTitle: 'Build dependent workflow',
-            blockerId: 'DEP-1',
-            blockerStateName: 'In Progress',
-            blockerStateType: 'started',
-            blockerTitle: 'Build dependency first',
-            relationType: 'blocks',
-            sourceTicketId: 'DEP-1',
-          },
-        ],
-        candidateCount: 2,
-        candidates: [
-          {
-            activeLane: false,
-            activeReasons: [],
-            blockedBy: [],
-            blocks: [],
-            changedPaths: ['src/dependency.ts'],
-            changedZones: ['src'],
-            priority: 2,
-            projectName: 'Dependency Project',
-            status: 'ready',
-            ticketIds: ['DEP-1'],
-            title: 'Build dependency first',
-            workflowId: 'ticket:DEP-1',
-          },
-          {
-            activeLane: false,
-            activeReasons: [],
-            blockedBy: [],
-            blocks: [],
-            changedPaths: ['server/dependent.py'],
-            changedZones: ['server'],
-            priority: 2,
-            projectName: 'Dependency Project',
-            status: 'blocked',
-            ticketIds: ['DEP-2'],
-            title: 'Build dependent workflow',
-            workflowId: 'ticket:DEP-2',
-          },
-        ],
-        laneLoad: {
-          activeCount: 0,
-          maxActiveLanes: 3,
-          openSlots: 2,
-          recommendedActiveLanes: 2,
-        },
-        pairwise: [
-          {
-            leftWorkflowId: 'ticket:DEP-1',
-            reason: 'DEP-1 blocks DEP-2.',
-            rightWorkflowId: 'ticket:DEP-2',
-            status: 'blocked',
-            type: 'linear-dependency',
-          },
-        ],
-        suggestedWaves: [
-          {
-            id: 'wave:ready',
-            reason: 'Only unblocked work is safe.',
-            title: 'Ready parallel wave',
-            workflowIds: ['ticket:DEP-1'],
-          },
-        ],
-        summary: '2 candidate lane(s); 0 active; 2 open slot(s); 1 blocked; 1 suggested for the next wave.',
-      },
+      parallelReadiness: mockDependencyParallelReadiness(),
       planDocs: [],
       planningSignals: {
         docs: [],
@@ -780,6 +712,82 @@ function mockDependencyEvidenceSnapshot(workflowBrief) {
         mcpHints: [],
       },
     },
+  };
+}
+
+function mockDependencyParallelReadiness() {
+  return {
+    blockerEdges: [
+      {
+        blockedId: 'DEP-2',
+        blockedStateName: 'Todo',
+        blockedStateType: 'unstarted',
+        blockedTitle: 'Build dependent workflow',
+        blockerId: 'DEP-1',
+        blockerStateName: 'In Progress',
+        blockerStateType: 'started',
+        blockerTitle: 'Build dependency first',
+        relationType: 'blocks',
+        sourceTicketId: 'DEP-1',
+      },
+    ],
+    candidateCount: 2,
+    candidates: [
+      {
+        activeLane: false,
+        activeReasons: [],
+        blockedBy: [],
+        blocks: [],
+        changedPaths: ['src/dependency.ts'],
+        changedZones: ['src'],
+        priority: 2,
+        projectName: 'Dependency Project',
+        prNumbers: [],
+        status: 'ready',
+        ticketIds: ['DEP-1'],
+        title: 'Build dependency first',
+        workflowId: 'ticket:DEP-1',
+      },
+      {
+        activeLane: false,
+        activeReasons: [],
+        blockedBy: [],
+        blocks: [],
+        changedPaths: ['server/dependent.py'],
+        changedZones: ['server'],
+        priority: 2,
+        projectName: 'Dependency Project',
+        prNumbers: [],
+        status: 'blocked',
+        ticketIds: ['DEP-2'],
+        title: 'Build dependent workflow',
+        workflowId: 'ticket:DEP-2',
+      },
+    ],
+    laneLoad: {
+      activeCount: 0,
+      maxActiveLanes: 3,
+      openSlots: 2,
+      recommendedActiveLanes: 2,
+    },
+    pairwise: [
+      {
+        leftWorkflowId: 'ticket:DEP-1',
+        reason: 'DEP-1 blocks DEP-2.',
+        rightWorkflowId: 'ticket:DEP-2',
+        status: 'blocked',
+        type: 'linear-dependency',
+      },
+    ],
+    suggestedWaves: [
+      {
+        id: 'wave:ready',
+        reason: 'Only unblocked work is safe.',
+        title: 'Ready parallel wave',
+        workflowIds: ['ticket:DEP-1'],
+      },
+    ],
+    summary: '2 candidate lane(s); 0 active; 2 open slot(s); 1 blocked; 1 suggested for the next wave.',
   };
 }
 
@@ -1285,6 +1293,13 @@ function validateWorkflowBriefShape(response) {
   if (!Number.isFinite(response.ttlSeconds)) {
     throw new Error('Expected workflow brief response ttlSeconds');
   }
+  if (
+    !response.parallelReadiness ||
+    typeof response.parallelReadiness !== 'object'
+  ) {
+    throw new Error('Expected workflow brief response to expose parallel readiness');
+  }
+  validateParallelReadinessShape(response.parallelReadiness);
   if (
     !response.automation ||
     typeof response.automation !== 'object' ||
