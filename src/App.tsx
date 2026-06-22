@@ -3245,11 +3245,37 @@ function BatchWorkflowActionButton({
       const batchRun = safeBatchRunMetadata(runnableActions);
       setState({
         completed: 0,
-        message: `${moveCount(runnableActions.length, 'lane')} still safe after fresh evidence.`,
+        message: `${moveCount(runnableActions.length, 'lane')} still safe after fresh evidence. Checking local actions.`,
         status: 'running',
-        title: 'Running safe batch',
+        title: 'Preflighting safe batch',
         total: runnableActions.length,
       });
+
+      for (const [index, item] of runnableActions.entries()) {
+        setState({
+          completed: 0,
+          message: item.workflow.title,
+          status: 'running',
+          title: `Preflight ${index + 1}/${runnableActions.length}`,
+          total: runnableActions.length,
+        });
+        const response = await fetch('/api/workflow-action', {
+          body: JSON.stringify({
+            ...item.action.request,
+            batchId: batchRun.id,
+            batchTitle: batchRun.title,
+            dryRun: true,
+          }),
+          headers: { 'content-type': 'application/json' },
+          method: 'POST',
+        });
+        const payload = (await response.json()) as WorkflowActionErrorPayload;
+        if (!response.ok || !payload.ok) {
+          throw new Error(
+            `${item.workflow.title} preflight: ${workflowActionErrorMessage(payload, response.status)}`,
+          );
+        }
+      }
 
       for (const [index, item] of runnableActions.entries()) {
         setState({

@@ -1247,6 +1247,7 @@ async function verifySafeBatchRevalidation(page, dashboard, workflowBrief) {
   };
   const actionHandler = async (route) => {
     const payload = route.request().postDataJSON();
+    const isDryRun = payload?.dryRun === true;
     if (
       !payload ||
       typeof payload.batchId !== 'string' ||
@@ -1256,13 +1257,22 @@ async function verifySafeBatchRevalidation(page, dashboard, workflowBrief) {
     ) {
       throw new Error('Expected safe batch workflow action to include batch metadata');
     }
-    events.push('workflow-action');
+    events.push(isDryRun ? 'workflow-action-dry-run' : 'workflow-action');
     await route.fulfill({
-      body: JSON.stringify({
-        detail: { error: 'Mock stop after preflight.' },
-      }),
+      body: JSON.stringify(
+        isDryRun
+          ? {
+              command: ['mock-ticketboard-action'],
+              dryRun: true,
+              message: 'Mock preflight passed.',
+              ok: true,
+            }
+          : {
+              detail: { error: 'Mock stop after preflight.' },
+            },
+      ),
       contentType: 'application/json',
-      status: 409,
+      status: isDryRun ? 200 : 409,
     });
   };
 
@@ -1280,7 +1290,7 @@ async function verifySafeBatchRevalidation(page, dashboard, workflowBrief) {
     await page.waitForSelector('text=Parallel-readiness evidence changed while revalidating.', {
       timeout: 10_000,
     });
-    if (events.includes('workflow-action')) {
+    if (events.some((event) => event.startsWith('workflow-action'))) {
       throw new Error('Expected stale workflow brief revalidation to stop before workflow-action');
     }
 
@@ -1302,9 +1312,13 @@ async function verifySafeBatchRevalidation(page, dashboard, workflowBrief) {
   if (actionIndex < 0) {
     throw new Error('Expected safe batch runner to attempt a workflow action after revalidation');
   }
+  const dryRunIndex = events.indexOf('workflow-action-dry-run');
+  if (dryRunIndex < 0 || dryRunIndex > actionIndex) {
+    throw new Error(`Expected safe batch runner to dry-run before workflow-action; got ${events.join(', ')}`);
+  }
   for (const required of ['dashboard-refresh', 'brief-refresh']) {
     const index = events.indexOf(required);
-    if (index < 0 || index > actionIndex) {
+    if (index < 0 || index > dryRunIndex) {
       throw new Error(`Expected safe batch runner to ${required} before workflow-action; got ${events.join(', ')}`);
     }
   }
