@@ -110,6 +110,12 @@ type ParallelRunGroup = {
   workflowId: string | null;
 };
 
+type ParallelRunGuard = {
+  detail: string;
+  group: ParallelRunGroup;
+  title: string;
+};
+
 type ActionButtonState =
   | { message: string; status: 'done'; title: string }
   | { message: string; status: 'failed'; title: string }
@@ -740,9 +746,10 @@ export function App() {
   const prepareSafeBatchActions = useCallback(async (): Promise<BatchActionPreparation> => {
     setRefreshing(true);
     try {
-      const [dashboardResponse, briefResponse] = await Promise.all([
+      const [dashboardResponse, briefResponse, userStateResponse] = await Promise.all([
         fetch('/api/dashboard?refresh=1', { headers: { 'cache-control': 'no-cache' } }),
         fetch('/api/workflow-brief?refresh=1', { headers: { 'cache-control': 'no-cache' } }),
+        fetch('/api/user-state', { headers: { 'cache-control': 'no-cache' } }),
       ]);
       if (!dashboardResponse.ok) {
         throw new Error(`Dashboard request failed with ${dashboardResponse.status}`);
@@ -750,11 +757,16 @@ export function App() {
       if (!briefResponse.ok) {
         throw new Error(`Workflow brief request failed with ${briefResponse.status}`);
       }
+      if (!userStateResponse.ok) {
+        throw new Error(`User state request failed with ${userStateResponse.status}`);
+      }
 
       const freshDashboard = (await dashboardResponse.json()) as DashboardData;
       const freshBriefResponse = (await briefResponse.json()) as WorkflowBriefResponse;
+      const freshUserState = normalizeLocalState(await userStateResponse.json());
       setLoadState({ data: freshDashboard, error: null, loading: false });
       setBriefState({ data: freshBriefResponse, error: null, loading: false });
+      setLocalState((current) => mergeLocalState(current, freshUserState));
 
       if (briefStatusStopsSafeBatch(freshBriefResponse.status)) {
         return {
@@ -790,6 +802,15 @@ export function App() {
         recommendedActive: freshParallelPlan.recommendedActive,
         workflows: freshWorkflows,
       });
+      const freshRunGuard = unresolvedParallelRunGuard(
+        buildParallelRunGroups(freshUserState.handoffs, freshWorkflows),
+      );
+      if (freshRunGuard) {
+        return {
+          actions: [],
+          detail: freshRunGuard.detail,
+        };
+      }
       const actions = safeBatchLaneActions({
         batch: freshBatch,
         dashboard: freshDashboard,
@@ -1824,6 +1845,7 @@ function ProjectPlanRail({
       })
     : emptyLaneMatrix();
   const parallelRuns = buildParallelRunGroups(handoffs, workflows);
+  const parallelRunGuard = unresolvedParallelRunGuard(parallelRuns);
   const completionForecast = buildCompletionForecast({
     dashboard,
     parallelBatch,
@@ -1913,6 +1935,7 @@ function ProjectPlanRail({
           onSelect={onSelect}
           plan={parallelPlan}
           readiness={workflowBriefStatus?.parallelReadiness ?? null}
+          runGuard={parallelRunGuard}
           selectedWorkflowId={selectedWorkflowId}
           workflows={workflows}
         />
@@ -2437,6 +2460,19 @@ function parallelRunNextAction(status: ParallelRunGroup['status']) {
   return 'Batch is cleared; consider the next wave only if readiness still allows it.';
 }
 
+function unresolvedParallelRunGuard(groups: Array<ParallelRunGroup>): ParallelRunGuard | null {
+  const group = groups.find((item) => item.status !== 'cleared');
+  if (!group) return null;
+  const status = group.status === 'live' ? 'still live' : 'waiting on review';
+  return {
+    detail: `${sourceDossierDisplayText(group.title)} is ${status}: ${group.summary}. ${group.nextAction}`,
+    group,
+    title: group.status === 'live'
+      ? 'Previous batch still live'
+      : 'Previous batch waiting',
+  };
+}
+
 function ParallelRunLedger({
   groups,
   onSelect,
@@ -2612,6 +2648,7 @@ function ParallelLanesPanel({
   onSelect,
   plan,
   readiness,
+  runGuard,
   selectedWorkflowId,
   workflows,
 }: {
@@ -2624,6 +2661,7 @@ function ParallelLanesPanel({
   onSelect: (id: string) => void;
   plan: ParallelPlan;
   readiness: ParallelReadiness | null;
+  runGuard: ParallelRunGuard | null;
   selectedWorkflowId: string;
   workflows: Array<WorkflowItem>;
 }) {
@@ -2643,6 +2681,7 @@ function ParallelLanesPanel({
     lanes: plan.lanes,
     workflows,
   });
+  const runnableBatchActions = runGuard ? [] : batchLaneActions;
   const nextLaneUnavailableReason = nextLaneAction
     ? null
     : nextSafeLaneUnavailableReason(batch);
@@ -2708,9 +2747,19 @@ function ParallelLanesPanel({
               text={batchPacket}
               testId="copy-batch-packet"
             />
-            {batchLaneActions.length ? (
+            {runGuard ? (
+              <span
+                className="parallel-batch-run-guard"
+                data-safe-batch-memory-guard={runGuard.group.id}
+                title={runGuard.detail}
+              >
+                <strong>{runGuard.title}</strong>
+                <em>{runGuard.detail}</em>
+              </span>
+            ) : null}
+            {runnableBatchActions.length ? (
               <BatchWorkflowActionButton
-                actions={batchLaneActions}
+                actions={runnableBatchActions}
                 onBatchComplete={onBatchComplete}
                 onPrepareActions={onPrepareActions}
               />

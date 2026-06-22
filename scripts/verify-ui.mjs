@@ -21,6 +21,7 @@ try {
   await verifyDependencyGuardedBatch();
   await verifyReadinessGuardedBatch();
   await verifyBriefCapacityClamp();
+  await verifyParallelRunMemoryGuardsBatch();
   await verifyTokensPage({
     height: 900,
     screenshot: '/tmp/ticketboard-tokens.png',
@@ -560,8 +561,73 @@ async function verifyBriefCapacityClamp() {
   }
 }
 
-async function mockUserStateRoutes(page) {
-  const state = {
+async function verifyParallelRunMemoryGuardsBatch() {
+  const dashboard = mockCapacityDashboard();
+  const workflowBrief = mockCapacityBrief(dashboard.generatedAt);
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  page.on('console', (message) => {
+    if (message.type() === 'error') {
+      errors.push(message.text());
+    }
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+
+  await page.route('**/api/dashboard**', async (route) => {
+    await route.fulfill({
+      body: JSON.stringify(dashboard),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+  await page.route('**/api/workflow-brief**', async (route) => {
+    await route.fulfill({
+      body: JSON.stringify(workflowBrief),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+  await mockUserStateRoutes(page, {
+    dismissed: {},
+    handoffs: [
+      {
+        batchId: 'memory-batch',
+        batchTitle: 'Memory batch',
+        command: 'tmux new-window ...',
+        id: 'memory-handoff',
+        kind: 'launch-codex',
+        message: 'Started Codex for CAP-2.',
+        prNumber: null,
+        ranAt: new Date().toISOString(),
+        ticketId: 'CAP-2',
+        title: 'Capacity lane CAP-2',
+        workflowId: 'ticket:CAP-2',
+      },
+    ],
+  });
+
+  try {
+    await page.goto(`${baseUrl}/?batch-memory-guard=${Date.now()}`, {
+      timeout: API_TIMEOUT_MS,
+      waitUntil: 'domcontentloaded',
+    });
+    await page.waitForSelector('[data-app-ready="true"]', { timeout: 20_000 });
+    await page.waitForSelector('[data-safe-batch-memory-guard="memory-batch"]', {
+      timeout: 10_000,
+    });
+    const guardText = await page.locator('[data-safe-batch-memory-guard]').innerText();
+    if (!/Previous batch waiting|Memory batch|Review idle lanes/i.test(guardText)) {
+      throw new Error(`Expected unresolved batch memory guard, got "${guardText}"`);
+    }
+    if ((await page.locator('[data-testid="run-safe-batch"]').count()) > 0) {
+      throw new Error('Expected unresolved parallel-run memory to hide the safe-batch runner');
+    }
+  } finally {
+    await page.close();
+  }
+}
+
+async function mockUserStateRoutes(page, initialState = null) {
+  const state = initialState ?? {
     dismissed: {},
     handoffs: [
       {
