@@ -214,6 +214,7 @@ def workflow_brief_status(
     path = workflow_brief_path(settings)
     automation = workflow_automation_status(path)
     parallel_readiness = summarize_parallel_readiness(dashboard)
+    readiness_fingerprint = parallel_readiness_fingerprint(parallel_readiness)
     payload = read_json(path)
     if payload is None:
         return {
@@ -223,6 +224,7 @@ def workflow_brief_status(
             "ageSeconds": None,
             "automation": automation,
             "parallelReadiness": parallel_readiness,
+            "parallelReadinessFingerprint": readiness_fingerprint,
             "ttlSeconds": workflow_brief_ttl_seconds(),
             "reason": "No workflow brief has been generated yet.",
         }
@@ -236,6 +238,7 @@ def workflow_brief_status(
             "ageSeconds": None,
             "automation": automation,
             "parallelReadiness": parallel_readiness,
+            "parallelReadinessFingerprint": readiness_fingerprint,
             "ttlSeconds": workflow_brief_ttl_seconds(),
             "reason": reason,
         }
@@ -249,8 +252,26 @@ def workflow_brief_status(
             "ageSeconds": brief_age_seconds(payload),
             "automation": automation,
             "parallelReadiness": parallel_readiness,
+            "parallelReadinessFingerprint": readiness_fingerprint,
             "ttlSeconds": workflow_brief_ttl_seconds(),
             "reason": safety_reason,
+        }
+
+    readiness_drift_reason = brief_parallel_readiness_drift_reason(
+        payload,
+        readiness_fingerprint,
+    )
+    if readiness_drift_reason:
+        return {
+            "status": "stale",
+            "brief": payload,
+            "path": str(path),
+            "ageSeconds": brief_age_seconds(payload),
+            "automation": automation,
+            "parallelReadiness": parallel_readiness,
+            "parallelReadinessFingerprint": readiness_fingerprint,
+            "ttlSeconds": workflow_brief_ttl_seconds(),
+            "reason": readiness_drift_reason,
         }
 
     age_seconds = brief_age_seconds(payload)
@@ -262,6 +283,7 @@ def workflow_brief_status(
             "ageSeconds": age_seconds,
             "automation": automation,
             "parallelReadiness": parallel_readiness,
+            "parallelReadinessFingerprint": readiness_fingerprint,
             "ttlSeconds": workflow_brief_ttl_seconds(),
             "reason": "The workflow brief is older than the configured TTL.",
         }
@@ -275,6 +297,7 @@ def workflow_brief_status(
             "ageSeconds": age_seconds,
             "automation": automation,
             "parallelReadiness": parallel_readiness,
+            "parallelReadinessFingerprint": readiness_fingerprint,
             "ttlSeconds": workflow_brief_ttl_seconds(),
             "reason": f"The selected target {target_id} is not visible anymore.",
         }
@@ -286,6 +309,7 @@ def workflow_brief_status(
         "ageSeconds": age_seconds,
         "automation": automation,
         "parallelReadiness": parallel_readiness,
+        "parallelReadinessFingerprint": readiness_fingerprint,
         "ttlSeconds": workflow_brief_ttl_seconds(),
         "reason": None,
     }
@@ -299,6 +323,7 @@ def build_workflow_evidence_snapshot(
 ) -> dict[str, Any]:
     plan_docs = read_configured_plan_docs()
     plan_doc = plan_docs[0] if plan_docs else None
+    parallel_readiness = summarize_parallel_readiness(dashboard)
     snapshot = {
         "version": WORKFLOW_BRIEF_VERSION,
         "generatedAt": utc_now_iso(),
@@ -351,7 +376,10 @@ def build_workflow_evidence_snapshot(
             for ticket in dashboard.get("linearTickets", [])
         ],
         "projectFocus": summarize_project_focus(dashboard.get("linearTickets", [])),
-        "parallelReadiness": summarize_parallel_readiness(dashboard),
+        "parallelReadiness": parallel_readiness,
+        "parallelReadinessFingerprint": parallel_readiness_fingerprint(
+            parallel_readiness,
+        ),
         "sourceDossiers": summarize_source_dossiers(dashboard),
         "prs": [
             {
@@ -1766,6 +1794,131 @@ def workflow_evidence_fingerprint(
     return hashlib.sha256(encoded).hexdigest()
 
 
+def parallel_readiness_fingerprint(parallel_readiness: dict[str, Any]) -> str:
+    encoded = orjson.dumps(
+        normalize_parallel_readiness_for_fingerprint(parallel_readiness),
+        option=orjson.OPT_SORT_KEYS,
+    )
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def normalize_parallel_readiness_for_fingerprint(
+    parallel_readiness: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "blockerEdges": normalized_blocker_edges(
+            parallel_readiness.get("blockerEdges", []),
+        ),
+        "candidates": normalized_readiness_candidates(
+            parallel_readiness.get("candidates", []),
+        ),
+        "laneLoad": parallel_readiness.get("laneLoad", {}),
+        "pairwise": normalized_readiness_pairs(parallel_readiness.get("pairwise", [])),
+        "suggestedWaves": normalized_readiness_waves(
+            parallel_readiness.get("suggestedWaves", []),
+        ),
+    }
+
+
+def normalized_blocker_edges(value: Any) -> list[dict[str, Any]]:
+    edges = [
+        {
+            "blockedId": edge.get("blockedId"),
+            "blockedStateType": edge.get("blockedStateType"),
+            "blockerId": edge.get("blockerId"),
+            "blockerStateType": edge.get("blockerStateType"),
+            "relationType": edge.get("relationType"),
+        }
+        for edge in value
+        if isinstance(edge, dict)
+    ]
+    return sorted(
+        edges,
+        key=lambda edge: (
+            str(edge.get("blockerId") or ""),
+            str(edge.get("blockedId") or ""),
+            str(edge.get("relationType") or ""),
+        ),
+    )
+
+
+def normalized_readiness_candidates(value: Any) -> list[dict[str, Any]]:
+    candidates = [
+        {
+            "activeLane": candidate.get("activeLane"),
+            "activeReasons": sorted(str(item) for item in candidate.get("activeReasons", [])),
+            "blockedBy": normalized_brief_edges(candidate.get("blockedBy", [])),
+            "blocks": normalized_brief_edges(candidate.get("blocks", [])),
+            "changedPaths": sorted(str(path) for path in candidate.get("changedPaths", [])),
+            "changedZones": sorted(str(zone) for zone in candidate.get("changedZones", [])),
+            "prNumbers": sorted(candidate.get("prNumbers", [])),
+            "status": candidate.get("status"),
+            "ticketIds": sorted(str(ticket_id) for ticket_id in candidate.get("ticketIds", [])),
+            "workflowId": candidate.get("workflowId"),
+        }
+        for candidate in value
+        if isinstance(candidate, dict)
+    ]
+    return sorted(candidates, key=lambda candidate: str(candidate.get("workflowId") or ""))
+
+
+def normalized_brief_edges(value: Any) -> list[dict[str, Any]]:
+    edges = [
+        {
+            "blockedId": edge.get("blockedId"),
+            "blockerId": edge.get("blockerId"),
+        }
+        for edge in value
+        if isinstance(edge, dict)
+    ]
+    return sorted(
+        edges,
+        key=lambda edge: (
+            str(edge.get("blockerId") or ""),
+            str(edge.get("blockedId") or ""),
+        ),
+    )
+
+
+def normalized_readiness_pairs(value: Any) -> list[dict[str, Any]]:
+    pairs = [
+        {
+            "leftWorkflowId": pair.get("leftWorkflowId"),
+            "overlapPaths": sorted(str(path) for path in pair.get("overlapPaths", [])),
+            "reason": pair.get("reason"),
+            "rightWorkflowId": pair.get("rightWorkflowId"),
+            "sharedZones": sorted(str(zone) for zone in pair.get("sharedZones", [])),
+            "status": pair.get("status"),
+            "type": pair.get("type"),
+        }
+        for pair in value
+        if isinstance(pair, dict)
+    ]
+    return sorted(
+        pairs,
+        key=lambda pair: (
+            str(pair.get("leftWorkflowId") or ""),
+            str(pair.get("rightWorkflowId") or ""),
+            str(pair.get("type") or ""),
+        ),
+    )
+
+
+def normalized_readiness_waves(value: Any) -> list[dict[str, Any]]:
+    waves = [
+        {
+            "id": wave.get("id"),
+            "workflowIds": sorted(
+                str(workflow_id)
+                for workflow_id in wave.get("workflowIds", [])
+            ),
+        }
+        for wave in value
+        if isinstance(wave, dict)
+    ]
+    return sorted(waves, key=lambda wave: str(wave.get("id") or ""))
+
+
 def normalize_evidence_for_fingerprint(
     value: Any,
     *,
@@ -1926,6 +2079,22 @@ def brief_parallel_safety_reason(
         )
 
     return None
+
+
+def brief_parallel_readiness_drift_reason(
+    payload: dict[str, Any],
+    current_fingerprint: str,
+) -> str | None:
+    source = payload.get("source")
+    if not isinstance(source, dict):
+        return None
+    brief_fingerprint = str(source.get("parallelReadinessFingerprint") or "").strip()
+    if not brief_fingerprint or brief_fingerprint == current_fingerprint:
+        return None
+    return (
+        "Parallel-readiness evidence changed since this workflow brief was "
+        "generated."
+    )
 
 
 def workflow_id_from_brief_item(item: Any) -> str | None:

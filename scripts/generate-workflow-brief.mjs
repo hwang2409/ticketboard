@@ -233,6 +233,7 @@ Write JSON matching this schema:
   "source": {
     "evidenceSnapshotPath": "${snapshotPath}",
     "evidenceFingerprint": "${evidenceFingerprint}",
+    "parallelReadinessFingerprint": "<from snapshot.parallelReadinessFingerprint>",
     "dashboardGeneratedAt": "<from snapshot>",
     "planDocPath": "<from snapshot planDoc.path or null>",
     "planDocPaths": ["<from snapshot planDocs[].path>"],

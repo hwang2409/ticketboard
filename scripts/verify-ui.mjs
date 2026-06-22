@@ -668,6 +668,7 @@ function mockDependencyBrief(dashboardGeneratedAt) {
         dashboardGeneratedAt,
         evidenceFingerprint: 'dependency-fingerprint',
         evidenceSnapshotPath: '/tmp/ticketboard-dependency-snapshot.json',
+        parallelReadinessFingerprint: 'dependency-readiness-fingerprint',
         planDocPath: null,
         planDocPaths: [],
       },
@@ -675,6 +676,7 @@ function mockDependencyBrief(dashboardGeneratedAt) {
       version: 1,
     },
     parallelReadiness: mockDependencyParallelReadiness(),
+    parallelReadinessFingerprint: 'dependency-readiness-fingerprint',
     path: '/tmp/ticketboard-dependency-brief.json',
     reason: null,
     status: 'ready',
@@ -690,6 +692,7 @@ function mockDependencyEvidenceSnapshot(workflowBrief) {
     snapshot: {
       parallelRuns: [],
       parallelReadiness: mockDependencyParallelReadiness(),
+      parallelReadinessFingerprint: 'dependency-readiness-fingerprint',
       planDocs: [],
       planningSignals: {
         docs: [],
@@ -1300,6 +1303,9 @@ function validateWorkflowBriefShape(response) {
     throw new Error('Expected workflow brief response to expose parallel readiness');
   }
   validateParallelReadinessShape(response.parallelReadiness);
+  if (typeof response.parallelReadinessFingerprint !== 'string') {
+    throw new Error('Expected workflow brief response to expose parallel readiness fingerprint');
+  }
   if (
     !response.automation ||
     typeof response.automation !== 'object' ||
@@ -1348,6 +1354,7 @@ function validateWorkflowEvidenceShape(response) {
   const planDocs = response?.snapshot?.planDocs;
   const planningSignals = response?.snapshot?.planningSignals;
   const parallelReadiness = response?.snapshot?.parallelReadiness;
+  const parallelReadinessFingerprint = response?.snapshot?.parallelReadinessFingerprint;
   const parallelRuns = response?.snapshot?.parallelRuns;
   const prs = response?.snapshot?.prs;
   const refreshRequest = response?.snapshot?.refreshRequest;
@@ -1366,6 +1373,7 @@ function validateWorkflowEvidenceShape(response) {
     !Array.isArray(planningSignals.ticketIds) ||
     !parallelReadiness ||
     typeof parallelReadiness !== 'object' ||
+    typeof parallelReadinessFingerprint !== 'string' ||
     !parallelReadiness.laneLoad ||
     typeof parallelReadiness.laneLoad !== 'object' ||
     !Array.isArray(parallelReadiness.candidates) ||

@@ -452,6 +452,7 @@ export type WorkflowBrief = {
     dashboardGeneratedAt?: string;
     evidenceFingerprint?: string;
     evidenceSnapshotPath?: string;
+    parallelReadinessFingerprint?: string;
     planDocPath?: string | null;
     planDocPaths?: Array<string>;
     refreshRequest?: Omit<WorkflowRefreshRequest, 'ageSeconds'> | null;
@@ -546,6 +547,7 @@ export type WorkflowBriefResponse = {
   ttlSeconds?: number | null;
   ageSeconds?: number | null;
   parallelReadiness?: ParallelReadiness | null;
+  parallelReadinessFingerprint?: string | null;
   automation?: {
     briefTtlSeconds: number;
     evidenceFingerprint: string | null;

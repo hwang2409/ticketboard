@@ -34,6 +34,7 @@ It is designed to answer one question quickly: **what should own focus, what can
 - Builds a source dossier for each workflow from Linear project/cycle/labels, attachments, recent comments, related blockers, PR files, Codex sessions, tmux windows, and worktrees.
 - Includes that source dossier in copied work packets, Codex lane prompts, and the Codex evidence snapshot.
 - Writes deterministic parallel-readiness evidence for Codex: lane load, candidates, blocker edges, file conflicts, pairwise safety, and suggested waves.
+- Marks generated briefs stale when their parallel-readiness fingerprint no longer matches current lane evidence.
 - Defines a lane contract for every workflow: preflight checks, finish proof, and after-handoff refresh steps.
 - Queues and flags a refreshed Codex plan whenever a workflow handoff is newer than the current brief.
 - Lets you manually queue a fresh Codex plan from the dashboard without running a terminal command.
