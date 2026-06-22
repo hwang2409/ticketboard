@@ -754,6 +754,13 @@ export function App() {
       setLoadState({ data: freshDashboard, error: null, loading: false });
       setBriefState({ data: freshBriefResponse, error: null, loading: false });
 
+      if (briefStatusStopsSafeBatch(freshBriefResponse.status)) {
+        return {
+          actions: [],
+          detail: safeBatchBriefStopReason(freshBriefResponse),
+        };
+      }
+
       const freshWorkflows = buildWorkflows(freshDashboard);
       const freshBrief =
         freshBriefResponse.status === 'ready' ? freshBriefResponse.brief : null;
@@ -1622,6 +1629,18 @@ function briefStatusLabel(status: WorkflowBriefResponse['status']) {
   if (status === 'stale') return 'Stale';
   if (status === 'invalid') return 'Invalid';
   return 'Missing';
+}
+
+function briefStatusStopsSafeBatch(status: WorkflowBriefResponse['status']) {
+  return status === 'stale' || status === 'invalid';
+}
+
+function safeBatchBriefStopReason(status: WorkflowBriefResponse) {
+  const label = briefStatusLabel(status.status).toLowerCase();
+  const reason = status.reason?.trim();
+  return reason
+    ? `Workflow brief revalidated as ${label}: ${reason}`
+    : `Workflow brief revalidated as ${label}; regenerate the brief before running a safe batch.`;
 }
 
 function fingerprintStatusLabel(status: string) {

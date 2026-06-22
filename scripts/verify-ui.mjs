@@ -924,6 +924,7 @@ async function verifySafeBatchRevalidation(page, dashboard, workflowBrief) {
   if ((await batchAction.count()) < 1) return;
 
   const events = [];
+  let currentBriefResponse = workflowBrief;
   const dashboardHandler = async (route) => {
     const request = route.request();
     const url = new globalThis.URL(request.url());
@@ -944,7 +945,7 @@ async function verifySafeBatchRevalidation(page, dashboard, workflowBrief) {
     if (url.pathname === '/api/workflow-brief' && url.searchParams.get('refresh') === '1') {
       events.push('brief-refresh');
       await route.fulfill({
-        body: JSON.stringify(workflowBrief),
+        body: JSON.stringify(currentBriefResponse),
         contentType: 'application/json',
         status: 200,
       });
@@ -977,7 +978,27 @@ async function verifySafeBatchRevalidation(page, dashboard, workflowBrief) {
   await page.route('**/api/workflow-brief**', briefHandler);
   await page.route('**/api/workflow-action', actionHandler);
   try {
+    currentBriefResponse = {
+      ...workflowBrief,
+      status: 'stale',
+      reason: 'Parallel-readiness evidence changed while revalidating.',
+    };
     await batchAction.click();
+    await page.waitForSelector('text=Batch stopped', { timeout: 10_000 });
+    await page.waitForSelector('text=Parallel-readiness evidence changed while revalidating.', {
+      timeout: 10_000,
+    });
+    if (events.includes('workflow-action')) {
+      throw new Error('Expected stale workflow brief revalidation to stop before workflow-action');
+    }
+
+    events.length = 0;
+    currentBriefResponse = workflowBrief;
+    await batchAction.click();
+    const deadline = Date.now() + 10_000;
+    while (!events.includes('workflow-action') && Date.now() < deadline) {
+      await page.waitForTimeout(50);
+    }
     await page.waitForSelector('text=Batch stopped', { timeout: 10_000 });
   } finally {
     await page.unroute('**/api/dashboard**', dashboardHandler).catch(() => undefined);

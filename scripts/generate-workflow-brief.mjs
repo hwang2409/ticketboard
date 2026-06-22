@@ -160,7 +160,8 @@ function shouldRetryWithPty(result) {
   if (result.error || result.status === 0) {
     return false;
   }
-  return /stdin is not a terminal|not a terminal/i.test(result.stderr || '');
+  const output = [result.stderr, result.stdout].filter(Boolean).join('\n');
+  return /stdin is not a terminal|not a terminal/i.test(output);
 }
 
 function ptyCommand(command) {
