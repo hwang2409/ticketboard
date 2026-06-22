@@ -19,11 +19,14 @@ const PERMISSION_BYPASS_ARGS = [
   '--dangerously-bypass-approvals-and-sandbox',
   '--dangerously-bypass-hook-trust',
 ];
+const DEFAULT_CODEX_TIMEOUT_MS = 8 * 60 * 1000;
 const PROMPT_ARGUMENT_PLACEHOLDER = '<prompt argument>';
 const baseUrl = (urlArg?.slice('--url='.length) ?? process.env.TICKETBOARD_URL ?? 'http://127.0.0.1:4317').replace(/\/$/, '');
 const codexBin = codexArg?.slice('--codex-bin='.length) ?? process.env.TICKETBOARD_CODEX_BIN ?? 'codex';
 const codexArgs = buildCodexArgs();
 const codexCommand = [codexBin, 'exec', ...codexArgs, '--cd', process.cwd(), PROMPT_ARGUMENT_PLACEHOLDER];
+const codexStdinTransport = codexStdinTransportMode();
+const codexTimeoutMs = readPositiveMs(process.env.TICKETBOARD_CODEX_TIMEOUT_MS, DEFAULT_CODEX_TIMEOUT_MS);
 const dryRun = args.has('--dry-run');
 
 const response = await fetch(
@@ -58,7 +61,7 @@ if (dryRun) {
     fingerprintPath,
     promptPath,
     promptTransport: 'argv',
-    stdinTransport: codexStdinTransportName(),
+    stdinTransport: codexStdinTransportName(codexStdinTransport),
     snapshotPath,
   }, null, 2));
   process.exit(0);
@@ -114,6 +117,20 @@ function hasOption(values, option) {
 }
 
 function runCodexCommand(command) {
+  if (codexStdinTransport === 'pty') {
+    console.error(`[brief:codex] running Codex in a local pseudo-terminal; timeout=${formatDuration(codexTimeoutMs)}`);
+    const pty = spawnPtyBuffered(command);
+    if (pty) {
+      if (pty.status !== 0 || pty.error) {
+        replayBuffered(pty);
+      }
+      return pty;
+    }
+    console.error('[brief:codex] pseudo-terminal unavailable; falling back to direct non-interactive Codex.');
+  } else {
+    console.error(`[brief:codex] running Codex directly; timeout=${formatDuration(codexTimeoutMs)}`);
+  }
+
   const direct = spawnBuffered(command);
   if (direct.status === 0 || !shouldRetryWithPty(direct)) {
     replayBuffered(direct);
@@ -121,14 +138,12 @@ function runCodexCommand(command) {
   }
 
   console.error('[brief:codex] Codex rejected non-terminal stdin; retrying in a local pseudo-terminal.');
-  const pty = ptyCommand(command);
-  if (pty) {
-    const result = spawnSync(pty.bin, pty.args, {
-      stdio: ['ignore', 'inherit', 'inherit'],
-    });
-    if (!result.error || result.error.code !== 'ENOENT') {
-      return result;
+  const result = spawnPtyBuffered(command);
+  if (result) {
+    if (result.status !== 0 || result.error) {
+      replayBuffered(result);
     }
+    return result;
   }
 
   return {
@@ -140,11 +155,39 @@ function runCodexCommand(command) {
 }
 
 function spawnBuffered(command) {
-  return spawnSync(command[0], command.slice(1), {
+  return normalizeSpawnResult(spawnSync(command[0], command.slice(1), {
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
-  });
+    timeout: codexTimeoutMs,
+  }));
+}
+
+function spawnPtyBuffered(command) {
+  const pty = ptyCommand(command);
+  if (!pty) {
+    return null;
+  }
+  const result = normalizeSpawnResult(spawnSync(pty.bin, pty.args, {
+    encoding: 'utf8',
+    maxBuffer: 32 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: codexTimeoutMs,
+  }));
+  if (result.error?.code === 'ENOENT') {
+    return null;
+  }
+  return result;
+}
+
+function normalizeSpawnResult(result) {
+  if (result.error?.code === 'ETIMEDOUT') {
+    result.error = new Error(
+      `Codex brief generation timed out after ${formatDuration(codexTimeoutMs)}. `
+      + 'Set TICKETBOARD_CODEX_TIMEOUT_MS to adjust the limit.',
+    );
+  }
+  return result;
 }
 
 function replayBuffered(result) {
@@ -191,7 +234,23 @@ function shellQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-function codexStdinTransportName() {
+function codexStdinTransportMode() {
+  const configured = process.env.TICKETBOARD_CODEX_STDIN_TRANSPORT?.trim().toLowerCase();
+  if (configured === 'direct' || configured === 'pty') {
+    return configured;
+  }
+  if (process.platform !== 'win32' && !process.stdin.isTTY) {
+    return 'pty';
+  }
+  return 'direct';
+}
+
+function codexStdinTransportName(mode) {
+  if (mode === 'pty' && process.platform !== 'win32') {
+    return process.platform === 'darwin' || process.platform.endsWith('bsd')
+      ? 'script-bsd-pty'
+      : 'script-linux-pty';
+  }
   if (process.platform !== 'win32') {
     return process.platform === 'darwin' || process.platform.endsWith('bsd')
       ? 'noninteractive-with-script-bsd-pty-fallback'
@@ -401,4 +460,22 @@ function expandHome(path) {
     return `${process.env.HOME ?? '~'}${path.slice(1)}`;
   }
   return path;
+}
+
+function readPositiveMs(raw, fallback) {
+  const value = raw ? Number(raw) : fallback;
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function formatDuration(ms) {
+  if (ms < 1000) {
+    return `${ms}ms`;
+  }
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return remainder ? `${minutes}m ${remainder}s` : `${minutes}m`;
 }
