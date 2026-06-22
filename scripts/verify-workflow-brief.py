@@ -9,6 +9,7 @@ from server.workflow_brief import (
     brief_parallel_readiness_drift_reason,
     brief_parallel_safety_reason,
     parallel_readiness_fingerprint,
+    summarize_completion_memory,
     summarize_parallel_runs,
 )
 
@@ -214,6 +215,44 @@ def main() -> None:
         or "Review idle lanes" not in waiting_batch["nextAction"]
     ):
         raise AssertionError(f"Expected waiting parallel-run summary, got {waiting_batch!r}")
+
+    completion_memory = summarize_completion_memory(
+        [
+            {
+                "completedAt": "2026-06-22T00:00:00Z",
+                "priority": 2,
+                "projectName": "Admin Agent",
+                "relatedIssues": [
+                    {
+                        "issue": {
+                            "stateName": "Todo",
+                            "stateType": "unstarted",
+                            "ticketId": "DEP-5",
+                            "title": "Follow-up workflow",
+                        },
+                        "relationType": "blocks",
+                    },
+                ],
+                "stateName": "Done",
+                "stateType": "completed",
+                "ticketId": "DEP-4",
+                "title": "Finish prerequisite",
+            },
+            {
+                "priority": 2,
+                "projectName": "Admin Agent",
+                "relatedIssues": [],
+                "stateName": "Todo",
+                "stateType": "unstarted",
+                "ticketId": "DEP-5",
+                "title": "Follow-up workflow",
+            },
+        ],
+    )
+    if completion_memory["recent"][0]["ticketId"] != "DEP-4":
+        raise AssertionError(f"Expected completed blocker in memory, got {completion_memory!r}")
+    if completion_memory["unlocked"][0]["blockedId"] != "DEP-5":
+        raise AssertionError(f"Expected completed blocker to unlock DEP-5, got {completion_memory!r}")
 
     print("verified workflow brief parallel-safety validation")
 

@@ -117,23 +117,31 @@ function hasOption(values, option) {
 }
 
 function runCodexCommand(command) {
+  let triedPty = false;
   if (codexStdinTransport === 'pty') {
     console.error(`[brief:codex] running Codex in a local pseudo-terminal; timeout=${formatDuration(codexTimeoutMs)}`);
+    triedPty = true;
     const pty = spawnPtyBuffered(command);
     if (pty) {
-      if (pty.status !== 0 || pty.error) {
-        replayBuffered(pty);
+      if (pty.status === 0 || !hasTerminalStdinError(pty)) {
+        if (pty.status !== 0 || pty.error) {
+          replayBuffered(pty);
+        }
+        return pty;
       }
-      return pty;
+      console.error('[brief:codex] pseudo-terminal reported non-terminal stdin; retrying direct non-interactive Codex.');
+    } else {
+      console.error('[brief:codex] pseudo-terminal unavailable; falling back to direct non-interactive Codex.');
     }
-    console.error('[brief:codex] pseudo-terminal unavailable; falling back to direct non-interactive Codex.');
   } else {
     console.error(`[brief:codex] running Codex directly; timeout=${formatDuration(codexTimeoutMs)}`);
   }
 
   const direct = spawnBuffered(command);
-  if (direct.status === 0 || !shouldRetryWithPty(direct)) {
-    replayBuffered(direct);
+  if (direct.status === 0 || !hasTerminalStdinError(direct) || triedPty) {
+    if (direct.status !== 0 || direct.error) {
+      replayBuffered(direct);
+    }
     return direct;
   }
 
@@ -199,7 +207,7 @@ function replayBuffered(result) {
   }
 }
 
-function shouldRetryWithPty(result) {
+function hasTerminalStdinError(result) {
   if (result.error || result.status === 0) {
     return false;
   }
@@ -284,7 +292,7 @@ Also inspect snapshot.refreshRequest. If active, source/reason/workflowId/ticket
 Do not edit source files. Only write the workflow brief JSON file below:
 ${briefPath}
 
-Model this like Henry's daily engineering workflow: several Codex/tmux lanes may be active at once, but only one lane should own focus. Choose exactly one immediate "now" focus move, then build a parallel lane plan for the other work that can proceed, wait, or be cleaned up. Prefer live failing checks, active tmux/worktree lanes, and review state over quiet strategic backlog. Use projectFocus to preserve the Linear project runway: current, next, blocked, review, completed, and high-priority project pressure should shape lane order. Use parallelReadiness for deterministic lane load, candidate, blocker, pairwise conflict, changed-file, and suggested-wave evidence before deciding parallel safety. Use PR files and worktree status lines to judge file overlap or shared code areas before marking a lane parallel-safe. Treat Linear blocker relations as serialization constraints even when file overlap is absent. Use recentHandoffs and each handoff.outcome as orchestration memory: if Ticketboard just launched/resumed/opened a lane and the outcome is live or quiet, do not recommend launching the same lane again unless newer live evidence proves it needs another action. Use parallelRuns as batch memory: lanes in the same batch were intentionally launched together, so account for each batch status, summary, and nextAction before proposing another parallel wave. Use planDocs and planningSignals as the orchestrator memory layer: compare their done/current/next/blocked sections with live Linear, PR, tmux, worktree, and Codex evidence. If Linear projects/docs imply one sequence but live PR/tmux/handoff evidence says another, explain the mismatch in staleSignals or notes.
+Model this like Henry's daily engineering workflow: several Codex/tmux lanes may be active at once, but only one lane should own focus. Choose exactly one immediate "now" focus move, then build a parallel lane plan for the other work that can proceed, wait, or be cleaned up. Prefer live failing checks, active tmux/worktree lanes, and review state over quiet strategic backlog. Use projectFocus to preserve the Linear project runway: current, next, blocked, review, completed, and high-priority project pressure should shape lane order. Use completionMemory to avoid redoing recently completed work and to promote follow-up tickets that were just unblocked. Use parallelReadiness for deterministic lane load, candidate, blocker, pairwise conflict, changed-file, and suggested-wave evidence before deciding parallel safety. Use PR files and worktree status lines to judge file overlap or shared code areas before marking a lane parallel-safe. Treat Linear blocker relations as serialization constraints even when file overlap is absent. Use recentHandoffs and each handoff.outcome as orchestration memory: if Ticketboard just launched/resumed/opened a lane and the outcome is live or quiet, do not recommend launching the same lane again unless newer live evidence proves it needs another action. Use parallelRuns as batch memory: lanes in the same batch were intentionally launched together, so account for each batch status, summary, and nextAction before proposing another parallel wave. Use planDocs and planningSignals as the orchestrator memory layer: compare their done/current/next/blocked sections with live Linear, PR, tmux, worktree, Codex, and completion evidence. If Linear projects/docs imply one sequence but live PR/tmux/handoff/completion evidence says another, explain the mismatch in staleSignals or notes.
 
 Write JSON matching this schema:
 {

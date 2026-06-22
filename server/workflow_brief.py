@@ -376,6 +376,9 @@ def build_workflow_evidence_snapshot(
             for ticket in dashboard.get("linearTickets", [])
         ],
         "projectFocus": summarize_project_focus(dashboard.get("linearTickets", [])),
+        "completionMemory": summarize_completion_memory(
+            dashboard.get("linearTickets", []),
+        ),
         "parallelReadiness": parallel_readiness,
         "parallelReadinessFingerprint": parallel_readiness_fingerprint(
             parallel_readiness,
@@ -462,7 +465,8 @@ def build_workflow_evidence_snapshot(
                 "are not immediately recommended again unless live evidence changed. "
                 "Use parallelRuns to remember which lanes were intentionally launched "
                 "together and whether that batch is live, waiting, or cleared before "
-                "starting another wave."
+                "starting another wave. Use completionMemory to avoid redoing recently "
+                "completed work and to promote follow-ups that just became unblocked."
             ),
             "outputPath": str(workflow_brief_path(settings)),
         },
@@ -2231,6 +2235,100 @@ def summarize_project_focus(tickets: list[Any]) -> list[dict[str, Any]]:
         key=lambda item: str(item.get("latestUpdatedAt") or ""),
         reverse=True,
     )
+
+
+def summarize_completion_memory(tickets: list[Any]) -> dict[str, Any]:
+    if not isinstance(tickets, list):
+        return {"recent": [], "summary": "No completed Linear work is visible.", "unlocked": []}
+
+    completed = [
+        ticket
+        for ticket in tickets
+        if isinstance(ticket, dict) and linear_ticket_completed(ticket)
+    ]
+    completed_by_id = {
+        str(ticket.get("ticketId") or "").upper(): ticket
+        for ticket in completed
+        if str(ticket.get("ticketId") or "").strip()
+    }
+    recent = [
+        summarize_completed_ticket(ticket)
+        for ticket in sorted(completed, key=completion_sort_key, reverse=True)[:8]
+    ]
+    unlocked = summarize_completion_unlocks(
+        completed_by_id,
+        linear_dependency_edges(tickets),
+    )
+    return {
+        "recent": recent,
+        "summary": (
+            f"{len(recent)} recent completed item(s); "
+            f"{len(unlocked)} unblocked follow-up(s)."
+        ),
+        "unlocked": unlocked,
+    }
+
+
+def linear_ticket_completed(ticket: dict[str, Any]) -> bool:
+    return ticket.get("stateType") == "completed" or bool(ticket.get("completedAt"))
+
+
+def summarize_completed_ticket(ticket: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "completedAt": ticket.get("completedAt"),
+        "priority": ticket.get("priority"),
+        "projectName": ticket.get("projectName"),
+        "stateName": ticket.get("stateName"),
+        "ticketId": ticket.get("ticketId"),
+        "title": ticket.get("title"),
+        "updatedAt": ticket.get("updatedAt"),
+        "url": ticket.get("url"),
+    }
+
+
+def completion_sort_key(ticket: dict[str, Any]) -> str:
+    return str(ticket.get("completedAt") or ticket.get("updatedAt") or "")
+
+
+def summarize_completion_unlocks(
+    completed_by_id: dict[str, dict[str, Any]],
+    edges: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    unlocked = []
+    seen: set[tuple[str, str]] = set()
+    for edge in edges:
+        blocker_id = str(edge.get("blockerId") or "").upper()
+        blocked_id = str(edge.get("blockedId") or "").upper()
+        if (
+            not blocker_id
+            or not blocked_id
+            or blocker_id not in completed_by_id
+            or linear_issue_state_done(edge.get("blockedStateType"))
+        ):
+            continue
+        key = (blocker_id, blocked_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        completed = completed_by_id[blocker_id]
+        unlocked.append(
+            {
+                "blockedId": blocked_id,
+                "blockedStateName": edge.get("blockedStateName"),
+                "blockedTitle": edge.get("blockedTitle"),
+                "blockerCompletedAt": completed.get("completedAt"),
+                "blockerId": blocker_id,
+                "blockerTitle": completed.get("title") or edge.get("blockerTitle"),
+                "reason": (
+                    f"{blocker_id} is complete; {blocked_id} can move next."
+                ),
+            },
+        )
+    return sorted(
+        unlocked,
+        key=lambda item: str(item.get("blockerCompletedAt") or ""),
+        reverse=True,
+    )[:8]
 
 
 def brief_age_seconds(payload: dict[str, Any]) -> int | None:

@@ -1771,6 +1771,7 @@ function validateRefreshRequestShape(refreshRequest) {
 }
 
 function validateWorkflowEvidenceShape(response) {
+  const completionMemory = response?.snapshot?.completionMemory;
   const recentHandoffs = response?.snapshot?.recentHandoffs;
   const planDocs = response?.snapshot?.planDocs;
   const planningSignals = response?.snapshot?.planningSignals;
@@ -1786,6 +1787,11 @@ function validateWorkflowEvidenceShape(response) {
     typeof response !== 'object' ||
     typeof response.path !== 'string' ||
     typeof response.fingerprint !== 'string' ||
+    !completionMemory ||
+    typeof completionMemory !== 'object' ||
+    typeof completionMemory.summary !== 'string' ||
+    !Array.isArray(completionMemory.recent) ||
+    !Array.isArray(completionMemory.unlocked) ||
     !Array.isArray(planDocs) ||
     !planningSignals ||
     typeof planningSignals !== 'object' ||
@@ -1817,6 +1823,26 @@ function validateWorkflowEvidenceShape(response) {
   }
   validateRefreshRequestShape(refreshRequest);
   validateParallelReadinessShape(parallelReadiness);
+  for (const [index, completion] of completionMemory.recent.entries()) {
+    if (
+      !completion ||
+      typeof completion !== 'object' ||
+      typeof completion.ticketId !== 'string'
+    ) {
+      throw new Error(`Expected completion memory recent item ${index} to include a ticket id`);
+    }
+  }
+  for (const [index, unlocked] of completionMemory.unlocked.entries()) {
+    if (
+      !unlocked ||
+      typeof unlocked !== 'object' ||
+      typeof unlocked.blockerId !== 'string' ||
+      typeof unlocked.blockedId !== 'string' ||
+      typeof unlocked.reason !== 'string'
+    ) {
+      throw new Error(`Expected completion memory unlock ${index} to include blocker and blocked ids`);
+    }
+  }
   if ('ageSeconds' in refreshRequest) {
     throw new Error('Expected workflow evidence refresh request to omit volatile ageSeconds');
   }
