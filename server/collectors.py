@@ -59,6 +59,7 @@ LINEAR_ISSUE_BATCH_WORKERS = 5
 LINEAR_VERSION_BATCH_SIZE = 50
 LINEAR_VERSION_BATCH_WORKERS = 3
 LINEAR_FILTER_BATCH_SIZE = 100
+LINEAR_CACHE_VERSION = 2
 LINEAR_RETRY_STATUS_CODES = {400, 429, 500, 502, 503, 504}
 LINEAR_RETRY_DELAY_SECONDS = 0.15
 
@@ -2477,7 +2478,7 @@ def save_linear_ticket_cache(
     save_json(
         settings.cache_dir / "linear-cache.json",
         {
-            "version": 1,
+            "version": LINEAR_CACHE_VERSION,
             "savedAt": saved_at,
             "fullSavedAt": full_saved_at,
             "ownerNames": sorted(owner_names),
@@ -2557,6 +2558,8 @@ def linear_cache_is_fresh(
     payload = payload if payload is not None else cached_linear_payload(settings)
     if not payload:
         return False
+    if payload.get("version") != LINEAR_CACHE_VERSION:
+        return False
     cached_owner_names = {
         normalize_owner_name(value)
         for value in payload.get("ownerNames", [])
@@ -2585,6 +2588,8 @@ def linear_full_refresh_due(
         return True
     payload = payload if payload is not None else cached_linear_payload(settings)
     if not payload:
+        return True
+    if payload.get("version") != LINEAR_CACHE_VERSION:
         return True
     cached_owner_names = {
         normalize_owner_name(value)
@@ -2716,6 +2721,7 @@ LINEAR_ISSUE_SUMMARY_FIELDS = """
     title
     createdAt
     updatedAt
+    completedAt
     dueDate
     branchName
     priority
@@ -2725,12 +2731,12 @@ LINEAR_ISSUE_SUMMARY_FIELDS = """
     project { name }
     cycle { name }
     labels(first: 50) { nodes { name } }
-    parent { identifier }
-    children(first: 50) { nodes { identifier } }
+    parent { identifier title url state { name type } }
+    children(first: 50) { nodes { identifier title url state { name type } } }
     relations(first: 50) {
       nodes {
         type
-        relatedIssue { identifier }
+        relatedIssue { identifier title url state { name type } }
       }
     }
 """
