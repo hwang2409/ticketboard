@@ -128,6 +128,7 @@ async function verifyViewport({ width, height, screenshot }) {
         '## Project pulse',
         '## Project runway',
         '## Completion memory',
+        '## Recently merged PRs',
         '## Lane matrix',
         '## Parallel waves',
         '## Automation readiness',
@@ -798,6 +799,15 @@ function mockDependencyDashboard() {
       }),
     ],
     prs: [],
+    recentMergedPrs: [
+      mockPullRequest({
+        mergedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+        number: 41,
+        state: 'MERGED',
+        ticketIds: ['DEP-1'],
+        title: 'DEP-1 Build dependency first',
+      }),
+    ],
     repo: {
       nameWithOwner: 'you/project',
       path: '/tmp/ticketboard-dependency-project',
@@ -1069,6 +1079,7 @@ function mockCapacityDashboard() {
       }),
     ),
     prs: [],
+    recentMergedPrs: [],
     repo: {
       nameWithOwner: 'you/project',
       path: '/tmp/ticketboard-capacity-project',
@@ -1249,6 +1260,7 @@ function mockDependencyEvidenceSnapshot(workflowBrief) {
         ticketIds: ['DEP-1', 'DEP-2'],
       },
       prs: [],
+      recentMergedPrs: [],
       recentHandoffs: [],
       refreshRequest: {
         active: false,
@@ -1401,6 +1413,55 @@ function mockLinearTicket({
     title,
     updatedAt: now,
     url: `https://linear.app/example/issue/${ticketId}`,
+  };
+}
+
+function mockPullRequest({
+  mergedAt = null,
+  number,
+  state = 'OPEN',
+  ticketIds,
+  title,
+}) {
+  const now = new Date().toISOString();
+  return {
+    additions: 24,
+    assignees: [],
+    author: 'you',
+    baseRefName: 'main',
+    bodyPreview: '',
+    checkSummary: {
+      failed: 0,
+      passed: 4,
+      pending: 0,
+      state: 'green',
+      total: 4,
+    },
+    checks: [],
+    closedAt: mergedAt,
+    commentCount: 0,
+    commits: [],
+    deletions: 8,
+    detailLevel: 'summary',
+    files: [],
+    headRefName: `feature/${ticketIds[0].toLowerCase()}`,
+    isDraft: false,
+    labels: [],
+    latestComments: [],
+    latestReviews: [],
+    mergeStateStatus: 'CLEAN',
+    mergedAt,
+    milestone: null,
+    number,
+    reviewComments: [],
+    reviewCount: 0,
+    reviewDecision: null,
+    reviewRequests: [],
+    state,
+    ticketIds,
+    title,
+    updatedAt: now,
+    url: `https://github.com/you/project/pull/${number}`,
   };
 }
 
@@ -1790,6 +1851,7 @@ async function assertSemanticPrimaryAction(button) {
 function validateDashboardShape(dashboard) {
   for (const key of [
     'prs',
+    'recentMergedPrs',
     'linearTickets',
     'codexSessions',
     'tmuxWindows',
@@ -1816,6 +1878,16 @@ function validateDashboardShape(dashboard) {
     )
   ) {
     throw new Error('Expected PR rows to include check summary and ticket ids');
+  }
+  if (
+    dashboard.recentMergedPrs.some(
+      (pr) =>
+        typeof pr.number !== 'number' ||
+        !Array.isArray(pr.ticketIds) ||
+        typeof pr.mergedAt !== 'string',
+    )
+  ) {
+    throw new Error('Expected recently merged PR rows to include mergedAt and ticket ids');
   }
   if (
     dashboard.codexSessions.some(
@@ -1975,6 +2047,7 @@ function validateWorkflowEvidenceShape(response) {
   const parallelReadinessFingerprint = response?.snapshot?.parallelReadinessFingerprint;
   const parallelRuns = response?.snapshot?.parallelRuns;
   const prs = response?.snapshot?.prs;
+  const recentMergedPrs = response?.snapshot?.recentMergedPrs;
   const refreshRequest = response?.snapshot?.refreshRequest;
   const sourceDossiers = response?.snapshot?.sourceDossiers;
   const verification = response?.snapshot?.verification;
@@ -2006,6 +2079,7 @@ function validateWorkflowEvidenceShape(response) {
     !Array.isArray(parallelRuns) ||
     !Array.isArray(recentHandoffs) ||
     !Array.isArray(prs) ||
+    !Array.isArray(recentMergedPrs) ||
     !Array.isArray(sourceDossiers) ||
     !refreshRequest ||
     typeof refreshRequest !== 'object' ||
@@ -2015,7 +2089,7 @@ function validateWorkflowEvidenceShape(response) {
     !verification.commands ||
     typeof verification.commands !== 'object'
   ) {
-    throw new Error('Expected workflow evidence snapshot to include plan docs, source dossiers, parallel readiness, parallel runs, recent handoffs, refresh requests, PRs, and verification hints');
+    throw new Error('Expected workflow evidence snapshot to include plan docs, source dossiers, parallel readiness, parallel runs, recent handoffs, refresh requests, PRs, recent merged PRs, and verification hints');
   }
   validateRefreshRequestShape(refreshRequest);
   validateParallelReadinessShape(parallelReadiness);
@@ -2055,6 +2129,16 @@ function validateWorkflowEvidenceShape(response) {
   for (const [index, pr] of prs.entries()) {
     if (!pr || typeof pr !== 'object' || !Array.isArray(pr.files)) {
       throw new Error(`Expected workflow evidence PR ${index} to include changed files`);
+    }
+  }
+  for (const [index, pr] of recentMergedPrs.entries()) {
+    if (
+      !pr ||
+      typeof pr !== 'object' ||
+      typeof pr.number !== 'number' ||
+      typeof pr.mergedAt !== 'string'
+    ) {
+      throw new Error(`Expected workflow evidence merged PR ${index} to include number and mergedAt`);
     }
   }
   for (const [index, dossier] of sourceDossiers.entries()) {

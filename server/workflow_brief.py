@@ -389,6 +389,9 @@ def build_workflow_evidence_snapshot(
         "completionMemory": summarize_completion_memory(
             dashboard.get("linearTickets", []),
         ),
+        "recentMergedPrs": summarize_recent_merged_prs(
+            dashboard.get("recentMergedPrs", []),
+        ),
         "parallelReadiness": parallel_readiness,
         "parallelReadinessFingerprint": parallel_readiness_fingerprint(
             parallel_readiness,
@@ -476,7 +479,9 @@ def build_workflow_evidence_snapshot(
                 "Use parallelRuns to remember which lanes were intentionally launched "
                 "together and whether that batch is live, waiting, or cleared before "
                 "starting another wave. Use completionMemory to avoid redoing recently "
-                "completed work and to promote follow-ups that just became unblocked."
+                "completed work and to promote follow-ups that just became unblocked. "
+                "Use recentMergedPrs as shipped-work memory for cleanup, follow-up "
+                "ordering, and stale-plan detection after merges."
             ),
             "outputPath": str(workflow_brief_path(settings)),
         },
@@ -767,6 +772,34 @@ def parallel_run_next_action(status: str) -> str:
         "Batch is cleared; consider the next wave only if parallel readiness "
         "still allows it."
     )
+
+
+def summarize_recent_merged_prs(prs: Any) -> list[dict[str, Any]]:
+    if not isinstance(prs, list):
+        return []
+    summarized = []
+    for pr in prs:
+        if not isinstance(pr, dict):
+            continue
+        merged_at = pr.get("mergedAt") or pr.get("closedAt") or pr.get("updatedAt")
+        summarized.append(
+            {
+                "number": pr.get("number"),
+                "title": pr.get("title"),
+                "url": pr.get("url"),
+                "ticketIds": pr.get("ticketIds", []),
+                "headRefName": pr.get("headRefName"),
+                "baseRefName": pr.get("baseRefName"),
+                "state": pr.get("state"),
+                "mergedAt": merged_at,
+                "updatedAt": pr.get("updatedAt"),
+            },
+        )
+    return sorted(
+        summarized,
+        key=lambda item: str(item.get("mergedAt") or item.get("updatedAt") or ""),
+        reverse=True,
+    )[:8]
 
 
 def summarize_pr_files(files: Any) -> list[dict[str, Any]]:

@@ -11,6 +11,7 @@ from server.workflow_brief import (
     parallel_readiness_fingerprint,
     summarize_completion_memory,
     summarize_parallel_runs,
+    summarize_recent_merged_prs,
 )
 
 
@@ -253,6 +254,23 @@ def main() -> None:
         raise AssertionError(f"Expected completed blocker in memory, got {completion_memory!r}")
     if completion_memory["unlocked"][0]["blockedId"] != "DEP-5":
         raise AssertionError(f"Expected completed blocker to unlock DEP-5, got {completion_memory!r}")
+
+    recent_merged_prs = summarize_recent_merged_prs(
+        [
+            {
+                "headRefName": "feature/dep-4",
+                "mergedAt": "2026-06-22T01:00:00Z",
+                "number": 42,
+                "state": "MERGED",
+                "ticketIds": ["DEP-4"],
+                "title": "DEP-4 Finish prerequisite",
+                "updatedAt": "2026-06-22T01:00:00Z",
+                "url": "https://github.com/example/project/pull/42",
+            },
+        ],
+    )
+    if recent_merged_prs[0]["number"] != 42 or recent_merged_prs[0]["ticketIds"] != ["DEP-4"]:
+        raise AssertionError(f"Expected merged PR memory summary, got {recent_merged_prs!r}")
 
     print("verified workflow brief parallel-safety validation")
 

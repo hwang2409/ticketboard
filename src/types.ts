@@ -93,8 +93,11 @@ export type PullRequestSummary = {
   baseRefName: string;
   author: string;
   isDraft: boolean;
+  closedAt?: string | null;
+  mergedAt?: string | null;
   mergeStateStatus: string;
   reviewDecision: string | null;
+  state?: string | null;
   updatedAt: string;
   additions: number;
   deletions: number;
@@ -396,6 +399,7 @@ export type DashboardData = {
     url: string;
   };
   prs: Array<PullRequestSummary>;
+  recentMergedPrs: Array<PullRequestSummary>;
   linearTickets: Array<LinearTicketSummary>;
   codexSessions: Array<CodexSessionSummary>;
   tmuxWindows: Array<TmuxWindowSummary>;

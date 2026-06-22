@@ -6734,7 +6734,7 @@ function sourceDossierSummary(sections: Array<SourceDossierSection>) {
 
 function sourceDossierDisplayText(value: string) {
   return value
-    .replace(/\b[A-Z][A-Z0-9]+-\d+\b/gu, 'source issue')
+    .replace(/\b[A-Z][A-Z0-9]+-\d+\b/giu, 'source issue')
     .replace(/\bPR\s*#\d+\b/giu, 'pull request');
 }
 
@@ -7012,6 +7012,14 @@ function buildLivePlanPacket({
             `- Unlocked: ${item.blockedId} after ${item.blockerId} - ${item.reason}`,
         )
       : ['- No completed blocker has opened a follow-up lane.']),
+    '',
+    '## Recently merged PRs',
+    ...((dashboard.recentMergedPrs ?? []).length
+      ? (dashboard.recentMergedPrs ?? []).slice(0, 5).map(
+          (pr) =>
+            `- #${pr.number}: ${pr.title}${pr.mergedAt ? ` (${formatRelativeTime(pr.mergedAt)})` : ''}${pr.ticketIds.length ? ` - ${pr.ticketIds.join(', ')}` : ''}`,
+        )
+      : ['- No recently merged PR memory is visible.']),
     '',
     '## Lane load',
     `- ${laneLoad.summary}; ${laneLoad.runningCount} Codex; ${laneLoad.dirtyCount} dirty; capacity ${laneLoad.recommendedActive}/${laneLoad.maxActive} (${laneLoad.capacityLabel})`,

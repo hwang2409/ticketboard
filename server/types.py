@@ -112,8 +112,11 @@ class PullRequestSummary(TypedDict):
     baseRefName: str
     author: str
     isDraft: bool
+    closedAt: NotRequired[str | None]
+    mergedAt: NotRequired[str | None]
     mergeStateStatus: str
     reviewDecision: str | None
+    state: NotRequired[str | None]
     updatedAt: str
     additions: int
     deletions: int
@@ -358,6 +361,7 @@ class DashboardData(TypedDict):
     scope: dict[str, str | list[str] | None]
     repo: dict[str, str]
     prs: list[PullRequestSummary]
+    recentMergedPrs: list[PullRequestSummary]
     linearTickets: list[LinearTicketSummary]
     codexSessions: list[CodexSessionSummary]
     tmuxWindows: list[TmuxWindowSummary]

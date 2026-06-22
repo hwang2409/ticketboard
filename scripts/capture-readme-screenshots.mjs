@@ -210,6 +210,7 @@ function mockDashboard() {
         title: 'APP-219 Port onboarding API to capability gate',
       }),
     ],
+    recentMergedPrs: [],
     repo: {
       nameWithOwner: 'acme/product',
       path: '/Users/you/work/product',

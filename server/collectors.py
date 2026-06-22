@@ -241,9 +241,15 @@ def collect_dashboard(settings: Settings | None = None) -> DashboardData:
     )
     linear_prefetch_future = None
 
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with ThreadPoolExecutor(max_workers=7) as executor:
         pr_future = executor.submit(
             collect_github_prs,
+            settings,
+            diagnostics,
+            current_github_login,
+        )
+        recent_merged_pr_future = executor.submit(
+            collect_recent_merged_prs,
             settings,
             diagnostics,
             current_github_login,
@@ -267,6 +273,7 @@ def collect_dashboard(settings: Settings | None = None) -> DashboardData:
             )
 
         prs = pr_future.result()
+        recent_merged_prs = recent_merged_pr_future.result()
         worktrees = worktree_future.result()
         tmux_windows = tmux_future.result()
         codex_sessions = codex_future.result()
@@ -335,6 +342,9 @@ def collect_dashboard(settings: Settings | None = None) -> DashboardData:
         },
         "repo": repo,
         "prs": dashboard_prs,
+        "recentMergedPrs": [
+            dashboard_pr_summary(pr) for pr in recent_merged_prs
+        ],
         "linearTickets": dashboard_linear_tickets,
         "codexSessions": codex_sessions,
         "tmuxWindows": tmux_windows,
@@ -488,8 +498,11 @@ GH_PR_SUMMARY_FIELDS = [
     "baseRefName",
     "author",
     "isDraft",
+    "closedAt",
+    "mergedAt",
     "mergeStateStatus",
     "reviewDecision",
+    "state",
     "updatedAt",
     "additions",
     "deletions",
@@ -522,8 +535,11 @@ query TicketboardPrs($query: String!, $limit: Int!) {
         baseRefName
         author { login }
         isDraft
+        closedAt
+        mergedAt
         mergeStateStatus
         reviewDecision
+        state
         updatedAt
         additions
         deletions
@@ -591,8 +607,11 @@ query TicketboardPrDetail($owner: String!, $repo: String!, $number: Int!) {
       baseRefName
       author { login }
       isDraft
+      closedAt
+      mergedAt
       mergeStateStatus
       reviewDecision
+      state
       updatedAt
       additions
       deletions
@@ -805,6 +824,83 @@ def fetch_github_pr_summary_items_graphql(
     ]
 
 
+def collect_recent_merged_prs(
+    settings: Settings,
+    diagnostics: list[str],
+    owner_login: str | None,
+) -> list[PullRequestSummary]:
+    if not owner_login:
+        return []
+    limit = github_recent_merged_pr_limit()
+    if limit <= 0:
+        return []
+    cache_payload = cached_merged_prs_payload(settings)
+    if github_merged_pr_cache_is_fresh(settings, owner_login, cache_payload):
+        return cached_merged_prs_list(settings, owner_login, cache_payload)
+    cached_prs = cached_merged_prs_list(settings, owner_login, cache_payload)
+    try:
+        raw_prs = fetch_recent_merged_pr_summary_items_graphql(
+            settings,
+            owner_login,
+            limit,
+        )
+        prs = [
+            pr
+            for pr in (
+                normalize_pr(
+                    item,
+                    fallback=None,
+                    review_comments=[],
+                    detail_level="summary",
+                )
+                for item in raw_prs
+            )
+            if github_pr_matches_owner(pr, owner_login) and pr.get("mergedAt")
+        ][:limit]
+        save_github_merged_pr_cache(settings, owner_login, prs)
+        return prs
+    except Exception as exc:
+        diagnostics.append(
+            "GitHub merged PR memory unavailable, using cache if present: "
+            f"{exc}"
+        )
+        return cached_prs
+
+
+def fetch_recent_merged_pr_summary_items_graphql(
+    settings: Settings,
+    owner_login: str,
+    limit: int,
+) -> list[dict[str, Any]]:
+    token = github_auth_token()
+    response = github_graphql_client().post(
+        "https://api.github.com/graphql",
+        headers={
+            "Authorization": f"bearer {token}",
+            "Accept": "application/vnd.github+json",
+        },
+        json={
+            "query": GH_PR_SUMMARY_QUERY,
+            "variables": {
+                "query": github_merged_pr_search_query(settings, owner_login),
+                "limit": limit,
+            },
+        },
+    )
+    response.raise_for_status()
+    payload = response.json()
+    errors = payload.get("errors")
+    if errors:
+        message = errors[0].get("message") if isinstance(errors[0], dict) else errors[0]
+        raise RuntimeError(str(message))
+    nodes = (((payload.get("data") or {}).get("search") or {}).get("nodes") or [])
+    return [
+        github_graphql_pr_to_gh_item(node)
+        for node in nodes
+        if isinstance(node, dict) and node.get("number") is not None
+    ]
+
+
 def fetch_github_pr_version_items_graphql(
     settings: Settings,
     owner_login: str,
@@ -842,6 +938,13 @@ def fetch_github_pr_version_items_graphql(
 def github_pr_search_query(settings: Settings, owner_login: str) -> str:
     return (
         f"repo:{settings.repo_name} is:pr is:open "
+        f"author:{owner_login} sort:updated-desc"
+    )
+
+
+def github_merged_pr_search_query(settings: Settings, owner_login: str) -> str:
+    return (
+        f"repo:{settings.repo_name} is:pr is:merged "
         f"author:{owner_login} sort:updated-desc"
     )
 
@@ -952,6 +1055,14 @@ def github_pr_cache_key(settings: Settings, owner_login: str | None) -> str:
     return f"{settings.repo_name}:{settings.github_pr_limit}:{owner_login}"
 
 
+def github_recent_merged_pr_limit() -> int:
+    return min(max(int(os.environ.get("TICKETBOARD_MERGED_PR_LIMIT", "8")), 0), 50)
+
+
+def github_merged_pr_cache_key(settings: Settings, owner_login: str | None) -> str:
+    return f"{settings.repo_name}:merged:{github_recent_merged_pr_limit()}:{owner_login}"
+
+
 def github_pr_cache_is_fresh(
     settings: Settings,
     owner_login: str | None,
@@ -962,6 +1073,27 @@ def github_pr_cache_is_fresh(
         return False
     payload = payload if payload is not None else cached_prs_payload(settings)
     if payload.get("cacheKey") != github_pr_cache_key(settings, owner_login):
+        return False
+    saved_at = payload.get("savedAt")
+    if not isinstance(saved_at, str):
+        return False
+    try:
+        saved = datetime.fromisoformat(saved_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (datetime.now(UTC) - saved).total_seconds() < ttl_seconds
+
+
+def github_merged_pr_cache_is_fresh(
+    settings: Settings,
+    owner_login: str | None,
+    payload: dict[str, Any] | None = None,
+) -> bool:
+    ttl_seconds = int(os.environ.get("TICKETBOARD_GITHUB_TTL", "60"))
+    if ttl_seconds <= 0:
+        return False
+    payload = payload if payload is not None else cached_merged_prs_payload(settings)
+    if payload.get("cacheKey") != github_merged_pr_cache_key(settings, owner_login):
         return False
     saved_at = payload.get("savedAt")
     if not isinstance(saved_at, str):
@@ -1050,6 +1182,22 @@ def save_github_pr_cache(
     )
 
 
+def save_github_merged_pr_cache(
+    settings: Settings,
+    owner_login: str | None,
+    prs: list[PullRequestSummary],
+) -> None:
+    save_json(
+        merged_pr_cache_path(settings),
+        {
+            "version": 1,
+            "cacheKey": github_merged_pr_cache_key(settings, owner_login),
+            "savedAt": utc_now_iso(),
+            "prs": prs,
+        },
+    )
+
+
 def should_refresh_pr_review_comments(
     item: dict[str, Any],
     cached_by_number: dict[int, PullRequestSummary],
@@ -1088,6 +1236,15 @@ def cached_prs_payload(settings: Settings) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def merged_pr_cache_path(settings: Settings) -> Path:
+    return settings.cache_dir / "merged-pr-cache.json"
+
+
+def cached_merged_prs_payload(settings: Settings) -> dict[str, Any]:
+    payload = load_json(merged_pr_cache_path(settings))
+    return payload if isinstance(payload, dict) else {}
+
+
 def cached_prs_list(
     settings: Settings,
     owner_login: str | None,
@@ -1103,6 +1260,25 @@ def cached_prs_list(
         if isinstance(pr, dict)
         and isinstance(pr.get("number"), int)
         and github_pr_matches_owner(pr, owner_login)
+    ]
+
+
+def cached_merged_prs_list(
+    settings: Settings,
+    owner_login: str | None,
+    payload: dict[str, Any] | None = None,
+) -> list[PullRequestSummary]:
+    payload = payload if payload is not None else cached_merged_prs_payload(settings)
+    prs = payload.get("prs")
+    if not isinstance(prs, list):
+        return []
+    return [
+        pr
+        for pr in prs
+        if isinstance(pr, dict)
+        and isinstance(pr.get("number"), int)
+        and github_pr_matches_owner(pr, owner_login)
+        and pr.get("mergedAt")
     ]
 
 
@@ -1518,8 +1694,11 @@ def normalize_pr(
         "baseRefName": str(item.get("baseRefName") or ""),
         "author": actor_name(item.get("author")),
         "isDraft": bool(item.get("isDraft")),
+        "closedAt": item.get("closedAt"),
+        "mergedAt": item.get("mergedAt"),
         "mergeStateStatus": str(item.get("mergeStateStatus") or "UNKNOWN"),
         "reviewDecision": item.get("reviewDecision"),
+        "state": item.get("state"),
         "updatedAt": str(item.get("updatedAt") or ""),
         "additions": int(item.get("additions") or 0),
         "deletions": int(item.get("deletions") or 0),
