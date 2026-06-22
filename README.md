@@ -139,6 +139,7 @@ Most cache TTLs are also configurable in `.env.example`, but they are not requir
 | `pnpm typecheck` | Run strict TypeScript checks. |
 | `pnpm lint` | Run ESLint and Ruff. |
 | `pnpm build` | Build the production Vite bundle. |
+| `pnpm verify:brief` | Verify deterministic workflow-brief safety guards. |
 | `pnpm verify:ui` | Run the Playwright smoke checks against a running server. |
 | `pnpm screenshots:readme` | Regenerate sanitized README screenshots from mocked demo data. |
 

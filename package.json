@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint . && uv run ruff check server",
     "lint:py": "uv run ruff check server",
+    "verify:brief": "uv run python scripts/verify-workflow-brief.py",
     "verify:ui": "node scripts/verify-ui.mjs"
   },
   "dependencies": {

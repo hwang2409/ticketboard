@@ -240,6 +240,19 @@ def workflow_brief_status(
             "reason": reason,
         }
 
+    safety_reason = brief_parallel_safety_reason(payload, parallel_readiness)
+    if safety_reason:
+        return {
+            "status": "stale",
+            "brief": payload,
+            "path": str(path),
+            "ageSeconds": brief_age_seconds(payload),
+            "automation": automation,
+            "parallelReadiness": parallel_readiness,
+            "ttlSeconds": workflow_brief_ttl_seconds(),
+            "reason": safety_reason,
+        }
+
     age_seconds = brief_age_seconds(payload)
     if age_seconds is not None and age_seconds > workflow_brief_ttl_seconds():
         return {
@@ -1852,6 +1865,107 @@ def validate_brief_item(item: dict[str, Any], path: str) -> tuple[bool, str | No
         if key in item and not isinstance(item[key], list):
             return False, f"Workflow brief {path}.{key} must be an array."
     return True, None
+
+
+def brief_parallel_safety_reason(
+    payload: dict[str, Any],
+    parallel_readiness: dict[str, Any],
+) -> str | None:
+    lanes = [lane for lane in payload.get("lanes", []) if isinstance(lane, dict)]
+    if not lanes:
+        return None
+
+    readiness_by_workflow = {
+        str(candidate.get("workflowId") or ""): candidate
+        for candidate in parallel_readiness.get("candidates", [])
+        if isinstance(candidate, dict) and candidate.get("workflowId")
+    }
+    safe_workflow_ids: set[str] = set()
+    now_id = workflow_id_from_brief_item(payload.get("now"))
+    if now_id:
+        safe_workflow_ids.add(now_id)
+
+    for lane in lanes:
+        workflow_id = workflow_id_from_brief_item(lane)
+        if not workflow_id:
+            continue
+        role = str(lane.get("role") or "").strip().lower()
+        if role == "focus" or (
+            lane.get("parallelSafe") is True
+            and role not in {"watch", "waiting"}
+        ):
+            safe_workflow_ids.add(workflow_id)
+        if lane.get("parallelSafe") is not True or role in {"focus", "watch", "waiting"}:
+            continue
+        candidate = readiness_by_workflow.get(workflow_id)
+        if not candidate:
+            continue
+        blocker_reason = candidate_blocker_reason(workflow_id, candidate)
+        if blocker_reason:
+            return blocker_reason
+
+    if len(safe_workflow_ids) < 2:
+        return None
+
+    for pair in parallel_readiness.get("pairwise", []):
+        if not isinstance(pair, dict):
+            continue
+        left = str(pair.get("leftWorkflowId") or "")
+        right = str(pair.get("rightWorkflowId") or "")
+        if left not in safe_workflow_ids or right not in safe_workflow_ids:
+            continue
+        status = str(pair.get("status") or "")
+        if status not in {"blocked", "guarded"}:
+            continue
+        reason = str(pair.get("reason") or "current readiness requires serialization")
+        pair_type = str(pair.get("type") or "pairwise conflict")
+        return (
+            "Workflow brief marks "
+            f"{left} and {right} parallel-safe, but current readiness says "
+            f"{pair_type}: {reason}"
+        )
+
+    return None
+
+
+def workflow_id_from_brief_item(item: Any) -> str | None:
+    if not isinstance(item, dict):
+        return None
+    workflow_id = str(item.get("workflowId") or "").strip()
+    if workflow_id:
+        return workflow_id
+    ticket_id = str(item.get("ticketId") or "").strip().upper()
+    if ticket_id:
+        return f"ticket:{ticket_id}"
+    pr_number = item.get("prNumber")
+    if isinstance(pr_number, int):
+        return f"pr:{pr_number}"
+    return None
+
+
+def candidate_blocker_reason(
+    workflow_id: str,
+    candidate: dict[str, Any],
+) -> str | None:
+    blockers = [
+        blocker
+        for blocker in candidate.get("blockedBy", [])
+        if isinstance(blocker, dict)
+    ]
+    if blockers:
+        blocker = blockers[0]
+        blocker_id = str(blocker.get("blockerId") or "another workflow")
+        blocked_id = str(blocker.get("blockedId") or workflow_id)
+        return (
+            f"Workflow brief marks {workflow_id} parallel-safe, but "
+            f"{blocker_id} blocks {blocked_id}."
+        )
+    if candidate.get("status") == "blocked":
+        return (
+            f"Workflow brief marks {workflow_id} parallel-safe, but current "
+            "readiness marks it blocked."
+        )
+    return None
 
 
 def summarize_project_focus(tickets: list[Any]) -> list[dict[str, Any]]:
