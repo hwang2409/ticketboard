@@ -1216,6 +1216,7 @@ async function verifySafeBatchRevalidation(page, dashboard, workflowBrief) {
   if ((await batchAction.count()) < 1) return;
 
   const events = [];
+  let actionMode = 'real-fails';
   let currentBriefResponse = workflowBrief;
   const dashboardHandler = async (route) => {
     const request = route.request();
@@ -1258,21 +1259,28 @@ async function verifySafeBatchRevalidation(page, dashboard, workflowBrief) {
       throw new Error('Expected safe batch workflow action to include batch metadata');
     }
     events.push(isDryRun ? 'workflow-action-dry-run' : 'workflow-action');
+    if (actionMode === 'dry-run-fails' && !isDryRun) {
+      throw new Error('Expected dry-run failure to stop before real workflow action');
+    }
     await route.fulfill({
       body: JSON.stringify(
         isDryRun
-          ? {
-              command: ['mock-ticketboard-action'],
-              dryRun: true,
-              message: 'Mock preflight passed.',
-              ok: true,
-            }
+          ? actionMode === 'dry-run-fails'
+            ? {
+                detail: { error: 'Mock preflight failed.' },
+              }
+            : {
+                command: ['mock-ticketboard-action'],
+                dryRun: true,
+                message: 'Mock preflight passed.',
+                ok: true,
+              }
           : {
               detail: { error: 'Mock stop after preflight.' },
             },
       ),
       contentType: 'application/json',
-      status: isDryRun ? 200 : 409,
+      status: isDryRun ? (actionMode === 'dry-run-fails' ? 409 : 200) : 409,
     });
   };
 
@@ -1295,10 +1303,25 @@ async function verifySafeBatchRevalidation(page, dashboard, workflowBrief) {
     }
 
     events.length = 0;
+    actionMode = 'dry-run-fails';
     currentBriefResponse = workflowBrief;
     await batchAction.click();
-    const deadline = Date.now() + 10_000;
-    while (!events.includes('workflow-action') && Date.now() < deadline) {
+    const preflightDeadline = Date.now() + 10_000;
+    while (!events.includes('workflow-action-dry-run') && Date.now() < preflightDeadline) {
+      await page.waitForTimeout(50);
+    }
+    await page.waitForSelector('text=Batch stopped', { timeout: 10_000 });
+    await page.waitForSelector('text=Mock preflight failed.', { timeout: 10_000 });
+    await page.waitForTimeout(250);
+    if (!events.includes('workflow-action-dry-run') || events.includes('workflow-action')) {
+      throw new Error(`Expected dry-run failure to stop before real action; got ${events.join(', ')}`);
+    }
+
+    events.length = 0;
+    actionMode = 'real-fails';
+    await batchAction.click();
+    const realDeadline = Date.now() + 10_000;
+    while (!events.includes('workflow-action') && Date.now() < realDeadline) {
       await page.waitForTimeout(50);
     }
     await page.waitForSelector('text=Batch stopped', { timeout: 10_000 });
