@@ -101,7 +101,9 @@ type HandoffOutcome = {
 type ParallelRunGroup = {
   id: string;
   items: Array<HandoffEvent & { outcome: HandoffOutcome }>;
+  nextAction: string;
   ranAt: string;
+  status: 'cleared' | 'live' | 'waiting';
   summary: string;
   title: string;
   tone: HandoffOutcome['tone'];
@@ -2368,7 +2370,9 @@ function buildParallelRunGroups(
       grouped.set(batchId, {
         id: batchId,
         items: [{ ...handoff, outcome }],
+        nextAction: '',
         ranAt: handoff.ranAt,
+        status: 'live',
         summary: '',
         title: handoff.batchTitle?.trim() || 'Parallel run',
         tone: outcome.tone,
@@ -2392,9 +2396,14 @@ function buildParallelRunGroups(
       const clearedCount = group.items.filter((item) => item.outcome.tone === 'cleared').length;
       const outcomeParts = [
         liveCount ? `${liveCount} live` : '',
-        quietCount ? `${quietCount} idle` : '',
+        quietCount ? `${quietCount} waiting` : '',
         clearedCount ? `${clearedCount} cleared` : '',
       ].filter(Boolean);
+      const status: ParallelRunGroup['status'] = liveCount
+        ? 'live'
+        : quietCount
+          ? 'waiting'
+          : 'cleared';
       const tone: HandoffOutcome['tone'] = liveCount
         ? 'live'
         : quietCount
@@ -2405,6 +2414,8 @@ function buildParallelRunGroups(
         items: group.items.sort(
           (left, right) => timestampMs(right.ranAt) - timestampMs(left.ranAt),
         ),
+        nextAction: parallelRunNextAction(status),
+        status,
         summary: [
           moveCount(group.items.length, 'lane'),
           ...outcomeParts,
@@ -2414,6 +2425,16 @@ function buildParallelRunGroups(
     })
     .sort((left, right) => timestampMs(right.ranAt) - timestampMs(left.ranAt))
     .slice(0, 4);
+}
+
+function parallelRunNextAction(status: ParallelRunGroup['status']) {
+  if (status === 'live') {
+    return 'Wait for live lanes to finish or hand off before starting another parallel wave.';
+  }
+  if (status === 'waiting') {
+    return 'Review idle lanes and refresh evidence before starting another parallel wave.';
+  }
+  return 'Batch is cleared; consider the next wave only if readiness still allows it.';
 }
 
 function ParallelRunLedger({
@@ -2446,7 +2467,7 @@ function ParallelRunLedger({
                 <i>{group.summary}</i>
               </span>
               <small>
-                {group.tone} / {formatRelativeTime(group.ranAt)}
+                {group.status} / {formatRelativeTime(group.ranAt)}
               </small>
             </>
           );
@@ -6929,7 +6950,7 @@ function buildLivePlanPacket({
     ...(parallelRuns.length
       ? parallelRuns.map(
           (group) =>
-            `- ${sourceDossierDisplayText(group.title)}: ${group.summary}; ${formatRelativeTime(group.ranAt)}`,
+            `- ${sourceDossierDisplayText(group.title)}: ${group.summary}; status=${group.status}; ${group.nextAction} (${formatRelativeTime(group.ranAt)})`,
         )
       : ['- No grouped parallel runs are recorded.']),
     '',

@@ -1796,9 +1796,15 @@ function validateWorkflowEvidenceShape(response) {
       typeof run.batchId !== 'string' ||
       typeof run.batchTitle !== 'string' ||
       typeof run.laneCount !== 'number' ||
+      typeof run.liveCount !== 'number' ||
+      typeof run.quietCount !== 'number' ||
+      typeof run.clearedCount !== 'number' ||
+      typeof run.status !== 'string' ||
+      typeof run.summary !== 'string' ||
+      typeof run.nextAction !== 'string' ||
       !Array.isArray(run.handoffs)
     ) {
-      throw new Error(`Expected parallel run ${index} to include batch metadata and handoffs`);
+      throw new Error(`Expected parallel run ${index} to include batch status, summary, metadata, and handoffs`);
     }
   }
 }

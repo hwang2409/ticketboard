@@ -461,7 +461,8 @@ def build_workflow_evidence_snapshot(
                 "recent handoffs as orchestration memory so launched/resumed lanes "
                 "are not immediately recommended again unless live evidence changed. "
                 "Use parallelRuns to remember which lanes were intentionally launched "
-                "together and whether that batch is still live, idle, or cleared."
+                "together and whether that batch is live, waiting, or cleared before "
+                "starting another wave."
             ),
             "outputPath": str(workflow_brief_path(settings)),
         },
@@ -681,15 +682,27 @@ def summarize_parallel_runs(
             outcome = handoff.get("outcome")
             if isinstance(outcome, dict):
                 tones.append(str(outcome.get("tone") or ""))
+        live_count = tones.count("live")
+        quiet_count = tones.count("quiet")
+        cleared_count = tones.count("cleared")
+        status = parallel_run_status(live_count, quiet_count)
         summarized.append(
             {
                 "batchId": group["batchId"],
                 "batchTitle": group["batchTitle"],
                 "ranAt": group.get("ranAt"),
                 "laneCount": len(handoff_items),
-                "liveCount": tones.count("live"),
-                "quietCount": tones.count("quiet"),
-                "clearedCount": tones.count("cleared"),
+                "liveCount": live_count,
+                "quietCount": quiet_count,
+                "clearedCount": cleared_count,
+                "status": status,
+                "summary": parallel_run_summary(
+                    lane_count=len(handoff_items),
+                    live_count=live_count,
+                    quiet_count=quiet_count,
+                    cleared_count=cleared_count,
+                ),
+                "nextAction": parallel_run_next_action(status),
                 "handoffs": handoff_items[:8],
             },
         )
@@ -699,6 +712,47 @@ def summarize_parallel_runs(
         key=lambda item: str(item.get("ranAt") or ""),
         reverse=True,
     )[:8]
+
+
+def parallel_run_status(live_count: int, quiet_count: int) -> str:
+    if live_count:
+        return "live"
+    if quiet_count:
+        return "waiting"
+    return "cleared"
+
+
+def parallel_run_summary(
+    *,
+    lane_count: int,
+    live_count: int,
+    quiet_count: int,
+    cleared_count: int,
+) -> str:
+    parts = [
+        f"{lane_count} lane(s)",
+        f"{live_count} live",
+        f"{quiet_count} waiting",
+        f"{cleared_count} cleared",
+    ]
+    return "; ".join(parts)
+
+
+def parallel_run_next_action(status: str) -> str:
+    if status == "live":
+        return (
+            "Wait for live lanes to finish or hand off before starting another "
+            "parallel wave."
+        )
+    if status == "waiting":
+        return (
+            "Review idle lanes and refresh evidence before starting another "
+            "parallel wave."
+        )
+    return (
+        "Batch is cleared; consider the next wave only if parallel readiness "
+        "still allows it."
+    )
 
 
 def summarize_pr_files(files: Any) -> list[dict[str, Any]]:

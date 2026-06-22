@@ -9,6 +9,7 @@ from server.workflow_brief import (
     brief_parallel_readiness_drift_reason,
     brief_parallel_safety_reason,
     parallel_readiness_fingerprint,
+    summarize_parallel_runs,
 )
 
 
@@ -148,6 +149,71 @@ def main() -> None:
     }
     if parallel_readiness_fingerprint(readiness_a) != parallel_readiness_fingerprint(readiness_b):
         raise AssertionError("Expected parallel readiness fingerprint to be order-insensitive")
+
+    dashboard = {
+        "codexSessions": [
+            {
+                "status": "running",
+                "threadId": "thread-live",
+            },
+        ],
+        "tickets": [
+            {
+                "nextAction": "Review the idle lane.",
+                "state": "In Progress",
+                "ticketId": "DEP-2",
+            },
+        ],
+    }
+    parallel_runs = summarize_parallel_runs(
+        [
+            {
+                "batchId": "batch-live",
+                "batchTitle": "Live batch",
+                "id": "handoff-live",
+                "kind": "launch-codex",
+                "ranAt": "2026-06-22T00:02:00Z",
+                "title": "Live lane",
+                "workflowId": "session:thread-live",
+            },
+            {
+                "batchId": "batch-live",
+                "batchTitle": "Live batch",
+                "id": "handoff-cleared",
+                "kind": "open-pr",
+                "ranAt": "2026-06-22T00:01:00Z",
+                "title": "Cleared lane",
+                "workflowId": "pr:123",
+            },
+            {
+                "batchId": "batch-waiting",
+                "batchTitle": "Waiting batch",
+                "id": "handoff-waiting",
+                "kind": "launch-codex",
+                "ranAt": "2026-06-22T00:03:00Z",
+                "ticketId": "DEP-2",
+                "title": "Waiting lane",
+                "workflowId": "ticket:DEP-2",
+            },
+        ],
+        dashboard,
+    )
+    by_batch = {item["batchId"]: item for item in parallel_runs}
+    live_batch = by_batch["batch-live"]
+    if (
+        live_batch["status"] != "live"
+        or live_batch["liveCount"] != 1
+        or live_batch["clearedCount"] != 1
+        or "Wait for live lanes" not in live_batch["nextAction"]
+    ):
+        raise AssertionError(f"Expected live parallel-run summary, got {live_batch!r}")
+    waiting_batch = by_batch["batch-waiting"]
+    if (
+        waiting_batch["status"] != "waiting"
+        or waiting_batch["quietCount"] != 1
+        or "Review idle lanes" not in waiting_batch["nextAction"]
+    ):
+        raise AssertionError(f"Expected waiting parallel-run summary, got {waiting_batch!r}")
 
     print("verified workflow brief parallel-safety validation")
 
