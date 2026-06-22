@@ -539,6 +539,29 @@ export type ParallelReadiness = {
   summary: string;
 };
 
+export type CompletionMemory = {
+  recent: Array<{
+    completedAt?: string | null;
+    priority?: number | null;
+    projectName?: string | null;
+    stateName?: string | null;
+    ticketId: string;
+    title?: string | null;
+    updatedAt?: string | null;
+    url?: string | null;
+  }>;
+  summary: string;
+  unlocked: Array<{
+    blockedId: string;
+    blockedStateName?: string | null;
+    blockedTitle?: string | null;
+    blockerCompletedAt?: string | null;
+    blockerId: string;
+    blockerTitle?: string | null;
+    reason: string;
+  }>;
+};
+
 export type WorkflowBriefResponse = {
   status: 'invalid' | 'missing' | 'ready' | 'stale';
   brief: WorkflowBrief | null;
@@ -546,6 +569,7 @@ export type WorkflowBriefResponse = {
   reason: string | null;
   ttlSeconds?: number | null;
   ageSeconds?: number | null;
+  completionMemory?: CompletionMemory | null;
   parallelReadiness?: ParallelReadiness | null;
   parallelReadinessFingerprint?: string | null;
   automation?: {

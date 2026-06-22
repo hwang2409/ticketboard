@@ -20,6 +20,7 @@ import { ThemeToggle } from './theme';
 import type {
   CodexMessageSummary,
   CodexSessionSummary,
+  CompletionMemory,
   DashboardData,
   LinearLinkedIssueSummary,
   LinearTicketSummary,
@@ -38,6 +39,11 @@ import type {
 
 const AUTO_REFRESH_MS = 30_000;
 const LOCAL_STATE_KEY = 'ticketboard-simple-state-v1';
+const EMPTY_COMPLETION_MEMORY: CompletionMemory = {
+  recent: [],
+  summary: 'No completed Linear work is visible.',
+  unlocked: [],
+};
 
 type AppLoadState =
   | { data: DashboardData; error: null; loading: false }
@@ -1839,6 +1845,7 @@ function ProjectPlanRail({
   workflows: Array<WorkflowItem>;
 }) {
   const laneLoad = buildLaneLoad({ parallelPlan, workflows });
+  const completionMemory = workflowBriefStatus?.completionMemory ?? EMPTY_COMPLETION_MEMORY;
   const projectPulse = buildProjectPulse(workflows);
   const projectRunway = buildProjectRunway({ dashboard, workflows });
   const unlockMap = buildUnlockMap({ dashboard, workflows });
@@ -1864,6 +1871,7 @@ function ProjectPlanRail({
   const parallelRuns = buildParallelRunGroups(handoffs, workflows);
   const parallelRunGuard = unresolvedParallelRunGuard(parallelRuns, dismissed);
   const completionForecast = buildCompletionForecast({
+    completionMemory,
     dashboard,
     parallelBatch,
     selectedWorkflow,
@@ -1872,6 +1880,7 @@ function ProjectPlanRail({
   });
   const parallelWaves = parallelBatch ? buildParallelWaves(parallelBatch) : null;
   const livePlanPacket = buildLivePlanPacket({
+    completionMemory,
     completionForecast,
     dashboard,
     handoffs,
@@ -5501,27 +5510,21 @@ function buildUnlockMap({
 }
 
 function buildCompletionForecast({
+  completionMemory,
   dashboard,
   parallelBatch,
   selectedWorkflow,
   unlockMap,
   workflows,
 }: {
+  completionMemory: CompletionMemory;
   dashboard: DashboardData;
   parallelBatch: ParallelBatch | null;
   selectedWorkflow: WorkflowItem | null;
   unlockMap: UnlockMap;
   workflows: Array<WorkflowItem>;
 }): CompletionForecast {
-  if (!selectedWorkflow) {
-    return {
-      items: [],
-      summary: 'Select a workflow',
-    };
-  }
-
   const byTicket = workflowByTicketId(workflows);
-  const selectedTicketIds = workflowTicketIds(selectedWorkflow);
   const items: Array<CompletionForecastItem> = [];
   const seen = new Set<string>();
   const add = (item: CompletionForecastItem) => {
@@ -5530,51 +5533,82 @@ function buildCompletionForecast({
     items.push(item);
   };
 
-  for (const ticket of dashboard.linearTickets) {
-    for (const relation of ticket.relatedIssues) {
-      const edge = unlockEdgeFromRelation(ticket, relation);
-      if (!edge || !selectedTicketIds.has(edge.blocker.ticketId.toUpperCase())) {
-        continue;
-      }
-      const blockedWorkflow = byTicket.get(edge.blocked.ticketId.toUpperCase()) ?? null;
-      add({
-        detail: `${edge.blocked.ticketId} can move once ${edge.blocker.ticketId} is finished or handed off.`,
-        id: `forecast:linear:${edge.blocker.ticketId}:${edge.blocked.ticketId}`,
-        meta: relationLabel(edge.relationType),
-        title: `Unlock ${edge.blocked.ticketId}`,
-        tone: 'ready',
-        workflowId: blockedWorkflow?.id ?? null,
-      });
-    }
+  for (const unlocked of completionMemory.unlocked) {
+    const blockedId = unlocked.blockedId.toUpperCase();
+    const blockerId = unlocked.blockerId.toUpperCase();
+    const blockedWorkflow = byTicket.get(blockedId) ?? null;
+    add({
+      detail: unlocked.reason || `${blockerId} is complete; ${blockedId} can move next.`,
+      id: `forecast:completion:${blockerId}:${blockedId}`,
+      meta: unlocked.blockerCompletedAt
+        ? `Completed ${formatRelativeTime(unlocked.blockerCompletedAt)}`
+        : 'Completion memory',
+      title: `Start ${blockedId}`,
+      tone: 'ready',
+      workflowId: blockedWorkflow?.id ?? null,
+    });
   }
 
-  for (const pr of selectedWorkflow.prs) {
-    if (pr.checkSummary.state === 'green' && !pr.isDraft) {
+  if (selectedWorkflow) {
+    const selectedTicketIds = workflowTicketIds(selectedWorkflow);
+
+    for (const ticket of dashboard.linearTickets) {
+      for (const relation of ticket.relatedIssues) {
+        const edge = unlockEdgeFromRelation(ticket, relation);
+        if (!edge || !selectedTicketIds.has(edge.blocker.ticketId.toUpperCase())) {
+          continue;
+        }
+        const blockedWorkflow = byTicket.get(edge.blocked.ticketId.toUpperCase()) ?? null;
+        add({
+          detail: `${edge.blocked.ticketId} can move once ${edge.blocker.ticketId} is finished or handed off.`,
+          id: `forecast:linear:${edge.blocker.ticketId}:${edge.blocked.ticketId}`,
+          meta: relationLabel(edge.relationType),
+          title: `Unlock ${edge.blocked.ticketId}`,
+          tone: 'ready',
+          workflowId: blockedWorkflow?.id ?? null,
+        });
+      }
+    }
+
+    for (const pr of selectedWorkflow.prs) {
+      if (pr.checkSummary.state === 'green' && !pr.isDraft) {
+        add({
+          detail: pr.reviewDecision === 'CHANGES_REQUESTED'
+            ? 'Checks are green, but review changes still need a response.'
+            : 'After merge, refresh Ticketboard and clear any leftover local lane.',
+          id: `forecast:pr:${pr.number}:green`,
+          meta: pr.reviewDecision === 'APPROVED' ? 'Approved' : 'Green',
+          title: `Ship PR #${pr.number}`,
+          tone: pr.reviewDecision === 'CHANGES_REQUESTED' ? 'waiting' : 'ready',
+          workflowId: selectedWorkflow.id,
+        });
+      } else if (pr.checkSummary.state === 'red') {
+        add({
+          detail: `${moveCount(pr.checkSummary.failed, 'failing check')} must pass before this unlocks follow-up work.`,
+          id: `forecast:pr:${pr.number}:red`,
+          meta: 'Checks failing',
+          title: `Unblock PR #${pr.number}`,
+          tone: 'blocked',
+          workflowId: selectedWorkflow.id,
+        });
+      } else if (pr.checkSummary.state === 'pending') {
+        add({
+          detail: `${moveCount(pr.checkSummary.pending, 'pending check')} still needs a result before the lane can ship.`,
+          id: `forecast:pr:${pr.number}:pending`,
+          meta: 'Waiting',
+          title: `Watch PR #${pr.number}`,
+          tone: 'waiting',
+          workflowId: selectedWorkflow.id,
+        });
+      }
+    }
+
+    if (workflowHasLiveLane(selectedWorkflow)) {
       add({
-        detail: pr.reviewDecision === 'CHANGES_REQUESTED'
-          ? 'Checks are green, but review changes still need a response.'
-          : 'After merge, refresh Ticketboard and clear any leftover local lane.',
-        id: `forecast:pr:${pr.number}:green`,
-        meta: pr.reviewDecision === 'APPROVED' ? 'Approved' : 'Green',
-        title: `Ship PR #${pr.number}`,
-        tone: pr.reviewDecision === 'CHANGES_REQUESTED' ? 'waiting' : 'ready',
-        workflowId: selectedWorkflow.id,
-      });
-    } else if (pr.checkSummary.state === 'red') {
-      add({
-        detail: `${moveCount(pr.checkSummary.failed, 'failing check')} must pass before this unlocks follow-up work.`,
-        id: `forecast:pr:${pr.number}:red`,
-        meta: 'Checks failing',
-        title: `Unblock PR #${pr.number}`,
-        tone: 'blocked',
-        workflowId: selectedWorkflow.id,
-      });
-    } else if (pr.checkSummary.state === 'pending') {
-      add({
-        detail: `${moveCount(pr.checkSummary.pending, 'pending check')} still needs a result before the lane can ship.`,
-        id: `forecast:pr:${pr.number}:pending`,
-        meta: 'Waiting',
-        title: `Watch PR #${pr.number}`,
+        detail: 'After the handoff or merge, close stale tmux panes and clean or archive local changes.',
+        id: `forecast:cleanup:${selectedWorkflow.id}`,
+        meta: 'Cleanup',
+        title: 'Clear local residue',
         tone: 'waiting',
         workflowId: selectedWorkflow.id,
       });
@@ -5585,7 +5619,7 @@ function buildCompletionForecast({
     (decision) =>
       decision.status === 'ready' &&
       decision.workflowId &&
-      decision.workflowId !== selectedWorkflow.id,
+      decision.workflowId !== selectedWorkflow?.id,
   );
   if (readyDecision) {
     add({
@@ -5599,7 +5633,10 @@ function buildCompletionForecast({
   }
 
   const directUnlock = unlockMap.items.find(
-    (item) => item.workflowId && item.workflowId !== selectedWorkflow.id,
+    (item) =>
+      item.workflowId &&
+      item.workflowId !== selectedWorkflow?.id &&
+      !items.some((forecastItem) => forecastItem.workflowId === item.workflowId),
   );
   if (directUnlock) {
     add({
@@ -5612,22 +5649,12 @@ function buildCompletionForecast({
     });
   }
 
-  if (workflowHasLiveLane(selectedWorkflow)) {
-    add({
-      detail: 'After the handoff or merge, close stale tmux panes and clean or archive local changes.',
-      id: `forecast:cleanup:${selectedWorkflow.id}`,
-      meta: 'Cleanup',
-      title: 'Clear local residue',
-      tone: 'waiting',
-      workflowId: selectedWorkflow.id,
-    });
-  }
-
   const nextWorkflow = workflows.find(
     (workflow) =>
-      workflow.id !== selectedWorkflow.id &&
+      workflow.id !== selectedWorkflow?.id &&
       workflow.intent !== 'clean' &&
-      workflow.intent !== 'watch',
+      workflow.intent !== 'watch' &&
+      !items.some((forecastItem) => forecastItem.workflowId === workflow.id),
   );
   if (nextWorkflow) {
     add({
@@ -6912,6 +6939,7 @@ function buildWorkflowPacket(workflow: WorkflowItem, dashboard: DashboardData) {
 }
 
 function buildLivePlanPacket({
+  completionMemory,
   completionForecast,
   dashboard,
   handoffs,
@@ -6928,6 +6956,7 @@ function buildLivePlanPacket({
   workflowBriefStatus,
   workflows,
 }: {
+  completionMemory: CompletionMemory;
   completionForecast: CompletionForecast;
   dashboard: DashboardData;
   handoffs: Array<HandoffEvent>;
@@ -6968,6 +6997,21 @@ function buildLivePlanPacket({
     ...(projectRunway.items.length
       ? projectRunway.items.flatMap(projectRunwayPacketLines)
       : ['- No project runway is visible.']),
+    '',
+    '## Completion memory',
+    `- ${completionMemory.summary}`,
+    ...(completionMemory.recent.length
+      ? completionMemory.recent.slice(0, 5).map(
+          (item) =>
+            `- Done: ${item.ticketId}${item.title ? ` - ${item.title}` : ''}${item.completedAt ? ` (${formatRelativeTime(item.completedAt)})` : ''}`,
+        )
+      : ['- No recent completed Linear work is visible.']),
+    ...(completionMemory.unlocked.length
+      ? completionMemory.unlocked.slice(0, 5).map(
+          (item) =>
+            `- Unlocked: ${item.blockedId} after ${item.blockerId} - ${item.reason}`,
+        )
+      : ['- No completed blocker has opened a follow-up lane.']),
     '',
     '## Lane load',
     `- ${laneLoad.summary}; ${laneLoad.runningCount} Codex; ${laneLoad.dirtyCount} dirty; capacity ${laneLoad.recommendedActive}/${laneLoad.maxActive} (${laneLoad.capacityLabel})`,

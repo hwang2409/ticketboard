@@ -19,6 +19,7 @@ try {
     width: 390,
   });
   await verifyDependencyGuardedBatch();
+  await verifyCompletionMemoryForecast();
   await verifyReadinessGuardedBatch();
   await verifyBriefCapacityClamp();
   await verifyParallelRunMemoryGuardsBatch();
@@ -126,6 +127,7 @@ async function verifyViewport({ width, height, screenshot }) {
         '## Live plan',
         '## Project pulse',
         '## Project runway',
+        '## Completion memory',
         '## Lane matrix',
         '## Parallel waves',
         '## Automation readiness',
@@ -444,6 +446,55 @@ async function verifyDependencyGuardedBatch() {
     const matrixText = await page.locator('[data-lane-matrix]').innerText();
     if (!/Linear dependency|DEP-1 blocks DEP-2/i.test(matrixText)) {
       throw new Error(`Expected lane matrix to expose Linear dependency serialization, got "${matrixText}"`);
+    }
+  } finally {
+    await page.close();
+  }
+}
+
+async function verifyCompletionMemoryForecast() {
+  const dashboard = mockCompletionMemoryDashboard();
+  const workflowBrief = mockCompletionMemoryBrief(dashboard.generatedAt);
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  await page
+    .context()
+    .grantPermissions(['clipboard-read', 'clipboard-write'], { origin: baseUrl })
+    .catch(() => undefined);
+  page.on('console', (message) => {
+    if (message.type() === 'error') {
+      errors.push(message.text());
+    }
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+
+  await page.route('**/api/dashboard**', async (route) => {
+    await route.fulfill({
+      body: JSON.stringify(dashboard),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+  await page.route('**/api/workflow-brief**', async (route) => {
+    await route.fulfill({
+      body: JSON.stringify(workflowBrief),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+  await mockUserStateRoutes(page, { dismissed: {}, handoffs: [] });
+
+  try {
+    await page.goto(`${baseUrl}/?completion-memory=${Date.now()}`, {
+      timeout: API_TIMEOUT_MS,
+      waitUntil: 'domcontentloaded',
+    });
+    await page.waitForSelector('[data-app-ready="true"]', { timeout: 20_000 });
+    await page.waitForSelector('[data-completion-forecast-item="forecast:completion:DEP-1:DEP-2"]', {
+      timeout: 10_000,
+    });
+    const forecastText = await page.locator('[data-completion-forecast]').innerText();
+    if (!/Start DEP-2|DEP-1 is complete; DEP-2 can move next/i.test(forecastText)) {
+      throw new Error(`Expected completion memory to promote DEP-2, got "${forecastText}"`);
     }
   } finally {
     await page.close();
@@ -775,6 +826,138 @@ function mockDependencyDashboard() {
   };
 }
 
+function mockEmptyCompletionMemory() {
+  return {
+    recent: [],
+    summary: 'No completed Linear work is visible.',
+    unlocked: [],
+  };
+}
+
+function mockDependencyCompletionMemory() {
+  return {
+    recent: [
+      {
+        completedAt: new Date(Date.now() - 60_000).toISOString(),
+        priority: 2,
+        projectName: 'Dependency Project',
+        stateName: 'Done',
+        ticketId: 'DEP-1',
+        title: 'Build dependency first',
+        updatedAt: new Date(Date.now() - 60_000).toISOString(),
+        url: 'https://linear.app/example/issue/DEP-1',
+      },
+    ],
+    summary: '1 recent completed item(s); 1 unblocked follow-up(s).',
+    unlocked: [
+      {
+        blockedId: 'DEP-2',
+        blockedStateName: 'Todo',
+        blockedTitle: 'Build dependent workflow',
+        blockerCompletedAt: new Date(Date.now() - 60_000).toISOString(),
+        blockerId: 'DEP-1',
+        blockerTitle: 'Build dependency first',
+        reason: 'DEP-1 is complete; DEP-2 can move next.',
+      },
+    ],
+  };
+}
+
+function mockCompletionMemoryDashboard() {
+  const dashboard = mockDependencyDashboard();
+  return {
+    ...dashboard,
+    linearTickets: dashboard.linearTickets.map((ticket) =>
+      ticket.ticketId === 'DEP-1'
+        ? {
+            ...ticket,
+            completedAt: new Date(Date.now() - 60_000).toISOString(),
+            stateName: 'Done',
+            stateType: 'completed',
+          }
+        : ticket,
+    ),
+    tickets: [
+      mockTicketRow({
+        nextAction: 'Start the dependent lane now that DEP-1 is done.',
+        state: 'active',
+        ticketId: 'DEP-2',
+        title: 'Build dependent workflow',
+      }),
+    ],
+  };
+}
+
+function mockCompletionMemoryBrief(dashboardGeneratedAt) {
+  const now = new Date().toISOString();
+  return {
+    ageSeconds: null,
+    automation: {
+      briefTtlSeconds: 600,
+      evidenceFingerprint: 'completion-memory-fingerprint',
+      fingerprintPath: '/tmp/ticketboard-completion-memory.fingerprint.json',
+      fingerprintStatus: 'fresh',
+      fingerprintUpdatedAt: now,
+      intervalSeconds: 600,
+      lockActive: false,
+      lockAgeSeconds: null,
+      lockPath: '/tmp/ticketboard-completion-memory.lock',
+      lockStale: false,
+      lockTtlSeconds: 1800,
+      refreshRequest: {
+        active: false,
+        path: '/tmp/ticketboard-completion-memory.refresh',
+      },
+      snapshotPath: '/tmp/ticketboard-completion-memory-snapshot.json',
+    },
+    brief: null,
+    completionMemory: mockDependencyCompletionMemory(),
+    parallelReadiness: {
+      blockerEdges: [],
+      candidateCount: 1,
+      candidates: [
+        {
+          activeLane: false,
+          activeReasons: [],
+          blockedBy: [],
+          blocks: [],
+          changedPaths: [],
+          changedZones: [],
+          priority: 2,
+          projectName: 'Dependency Project',
+          prNumbers: [],
+          status: 'ready',
+          ticketIds: ['DEP-2'],
+          title: 'Build dependent workflow',
+          workflowId: 'ticket:DEP-2',
+        },
+      ],
+      laneLoad: {
+        activeCount: 0,
+        maxActiveLanes: 2,
+        openSlots: 2,
+        recommendedActiveLanes: 2,
+      },
+      pairwise: [],
+      suggestedWaves: [
+        {
+          id: 'wave:ready',
+          reason: 'DEP-2 was just unblocked.',
+          title: 'Ready parallel wave',
+          workflowIds: ['ticket:DEP-2'],
+        },
+      ],
+      summary: '1 candidate lane(s); DEP-2 was just unblocked.',
+    },
+    parallelReadinessFingerprint: 'completion-memory-readiness-fingerprint',
+    path: '/tmp/ticketboard-completion-memory-brief.json',
+    reason: 'No workflow brief has been generated yet.',
+    status: 'missing',
+    ttlSeconds: 600,
+    dashboardGeneratedAt,
+  };
+}
+
 function mockDependencyBrief(dashboardGeneratedAt) {
   const now = new Date().toISOString();
   return {
@@ -797,6 +980,7 @@ function mockDependencyBrief(dashboardGeneratedAt) {
       },
       snapshotPath: '/tmp/ticketboard-dependency-snapshot.json',
     },
+    completionMemory: mockEmptyCompletionMemory(),
     brief: {
       blocked: [],
       generatedAt: now,
@@ -929,6 +1113,7 @@ function mockCapacityBrief(dashboardGeneratedAt) {
       },
       snapshotPath: '/tmp/ticketboard-capacity-snapshot.json',
     },
+    completionMemory: mockEmptyCompletionMemory(),
     brief: {
       blocked: [],
       generatedAt: now,
@@ -1053,6 +1238,7 @@ function mockDependencyEvidenceSnapshot(workflowBrief) {
     fingerprint: 'dependency-fingerprint',
     path: '/tmp/ticketboard-dependency-snapshot.json',
     snapshot: {
+      completionMemory: mockEmptyCompletionMemory(),
       parallelRuns: [],
       parallelReadiness: mockDependencyParallelReadiness(),
       parallelReadinessFingerprint: 'dependency-readiness-fingerprint',
@@ -1708,6 +1894,7 @@ function validateWorkflowBriefShape(response) {
   if (!response || typeof response !== 'object') {
     throw new Error('Expected workflow brief response object');
   }
+  const completionMemory = response.completionMemory;
   if (!['invalid', 'missing', 'ready', 'stale'].includes(response.status)) {
     throw new Error(`Unexpected workflow brief status ${response.status}`);
   }
@@ -1726,6 +1913,15 @@ function validateWorkflowBriefShape(response) {
   validateParallelReadinessShape(response.parallelReadiness);
   if (typeof response.parallelReadinessFingerprint !== 'string') {
     throw new Error('Expected workflow brief response to expose parallel readiness fingerprint');
+  }
+  if (
+    !completionMemory ||
+    typeof completionMemory !== 'object' ||
+    typeof completionMemory.summary !== 'string' ||
+    !Array.isArray(completionMemory.recent) ||
+    !Array.isArray(completionMemory.unlocked)
+  ) {
+    throw new Error('Expected workflow brief response to expose completion memory');
   }
   if (
     !response.automation ||

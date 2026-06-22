@@ -213,6 +213,9 @@ def workflow_brief_status(
 ) -> dict[str, Any]:
     path = workflow_brief_path(settings)
     automation = workflow_automation_status(path)
+    completion_memory = summarize_completion_memory(
+        dashboard.get("linearTickets", []),
+    )
     parallel_readiness = summarize_parallel_readiness(dashboard)
     readiness_fingerprint = parallel_readiness_fingerprint(parallel_readiness)
     payload = read_json(path)
@@ -223,6 +226,7 @@ def workflow_brief_status(
             "path": str(path),
             "ageSeconds": None,
             "automation": automation,
+            "completionMemory": completion_memory,
             "parallelReadiness": parallel_readiness,
             "parallelReadinessFingerprint": readiness_fingerprint,
             "ttlSeconds": workflow_brief_ttl_seconds(),
@@ -237,6 +241,7 @@ def workflow_brief_status(
             "path": str(path),
             "ageSeconds": None,
             "automation": automation,
+            "completionMemory": completion_memory,
             "parallelReadiness": parallel_readiness,
             "parallelReadinessFingerprint": readiness_fingerprint,
             "ttlSeconds": workflow_brief_ttl_seconds(),
@@ -251,6 +256,7 @@ def workflow_brief_status(
             "path": str(path),
             "ageSeconds": brief_age_seconds(payload),
             "automation": automation,
+            "completionMemory": completion_memory,
             "parallelReadiness": parallel_readiness,
             "parallelReadinessFingerprint": readiness_fingerprint,
             "ttlSeconds": workflow_brief_ttl_seconds(),
@@ -268,6 +274,7 @@ def workflow_brief_status(
             "path": str(path),
             "ageSeconds": brief_age_seconds(payload),
             "automation": automation,
+            "completionMemory": completion_memory,
             "parallelReadiness": parallel_readiness,
             "parallelReadinessFingerprint": readiness_fingerprint,
             "ttlSeconds": workflow_brief_ttl_seconds(),
@@ -282,6 +289,7 @@ def workflow_brief_status(
             "path": str(path),
             "ageSeconds": age_seconds,
             "automation": automation,
+            "completionMemory": completion_memory,
             "parallelReadiness": parallel_readiness,
             "parallelReadinessFingerprint": readiness_fingerprint,
             "ttlSeconds": workflow_brief_ttl_seconds(),
@@ -296,6 +304,7 @@ def workflow_brief_status(
             "path": str(path),
             "ageSeconds": age_seconds,
             "automation": automation,
+            "completionMemory": completion_memory,
             "parallelReadiness": parallel_readiness,
             "parallelReadinessFingerprint": readiness_fingerprint,
             "ttlSeconds": workflow_brief_ttl_seconds(),
@@ -308,6 +317,7 @@ def workflow_brief_status(
         "path": str(path),
         "ageSeconds": age_seconds,
         "automation": automation,
+        "completionMemory": completion_memory,
         "parallelReadiness": parallel_readiness,
         "parallelReadinessFingerprint": readiness_fingerprint,
         "ttlSeconds": workflow_brief_ttl_seconds(),
