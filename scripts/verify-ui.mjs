@@ -19,6 +19,7 @@ try {
     width: 390,
   });
   await verifyDependencyGuardedBatch();
+  await verifyBriefCapacityClamp();
   await verifyTokensPage({
     height: 900,
     screenshot: '/tmp/ticketboard-tokens.png',
@@ -447,6 +448,58 @@ async function verifyDependencyGuardedBatch() {
   }
 }
 
+async function verifyBriefCapacityClamp() {
+  const dashboard = mockCapacityDashboard();
+  const workflowBrief = mockCapacityBrief(dashboard.generatedAt);
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  page.on('console', (message) => {
+    if (message.type() === 'error') {
+      errors.push(message.text());
+    }
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+
+  await page.route('**/api/dashboard**', async (route) => {
+    await route.fulfill({
+      body: JSON.stringify(dashboard),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+  await page.route('**/api/workflow-brief**', async (route) => {
+    await route.fulfill({
+      body: JSON.stringify(workflowBrief),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+  await mockUserStateRoutes(page);
+
+  try {
+    await page.goto(`${baseUrl}/?capacity-clamp=${Date.now()}`, {
+      timeout: API_TIMEOUT_MS,
+      waitUntil: 'domcontentloaded',
+    });
+    await page.waitForSelector('[data-app-ready="true"]', { timeout: 20_000 });
+    await page.waitForSelector('[data-parallel-batch]', { timeout: 10_000 });
+
+    const capacity = await page.locator('.parallel-capacity strong').allTextContents();
+    if (capacity[0] !== '1' || capacity[1] !== '1') {
+      throw new Error(`Expected inconsistent brief capacity to clamp to 1/1, got ${capacity.join('/')}`);
+    }
+    const readyCount = await page.locator('[data-batch-decision-status="ready"]').count();
+    if (readyCount !== 1) {
+      throw new Error(`Expected clamped brief capacity to allow one ready lane, got ${readyCount}`);
+    }
+    const batchLaneCount = await page.locator('[data-batch-lane]').count();
+    if (batchLaneCount !== 2) {
+      throw new Error(`Expected clamped batch to include focus plus one lane, got ${batchLaneCount}`);
+    }
+  } finally {
+    await page.close();
+  }
+}
+
 async function mockUserStateRoutes(page) {
   const state = {
     dismissed: {},
@@ -678,6 +731,122 @@ function mockDependencyBrief(dashboardGeneratedAt) {
     parallelReadiness: mockDependencyParallelReadiness(),
     parallelReadinessFingerprint: 'dependency-readiness-fingerprint',
     path: '/tmp/ticketboard-dependency-brief.json',
+    reason: null,
+    status: 'ready',
+    ttlSeconds: 600,
+  };
+}
+
+function mockCapacityDashboard() {
+  const now = new Date().toISOString();
+  const ids = ['CAP-1', 'CAP-2', 'CAP-3'];
+  return {
+    codexSessions: [],
+    diagnostics: [],
+    generatedAt: now,
+    linearTickets: ids.map((ticketId) =>
+      mockLinearTicket({
+        relatedIssues: [],
+        stateName: 'Todo',
+        stateType: 'unstarted',
+        ticketId,
+        title: `Capacity lane ${ticketId}`,
+      }),
+    ),
+    prs: [],
+    repo: {
+      nameWithOwner: 'you/project',
+      path: '/tmp/ticketboard-capacity-project',
+      url: 'https://github.com/you/project',
+    },
+    scope: {
+      githubLogin: 'you',
+      linearOwners: ['you'],
+    },
+    tickets: ids.map((ticketId) =>
+      mockTicketRow({
+        nextAction: `Start ${ticketId}.`,
+        state: 'todo',
+        ticketId,
+        title: `Capacity lane ${ticketId}`,
+      }),
+    ),
+    tmuxWindows: [],
+    worktrees: [],
+  };
+}
+
+function mockCapacityBrief(dashboardGeneratedAt) {
+  const now = new Date().toISOString();
+  return {
+    ageSeconds: 5,
+    automation: {
+      briefTtlSeconds: 600,
+      evidenceFingerprint: 'capacity-fingerprint',
+      fingerprintPath: '/tmp/ticketboard-capacity.fingerprint.json',
+      fingerprintStatus: 'fresh',
+      fingerprintUpdatedAt: now,
+      intervalSeconds: 600,
+      lockActive: false,
+      lockAgeSeconds: null,
+      lockPath: '/tmp/ticketboard-capacity.lock',
+      lockStale: false,
+      lockTtlSeconds: 1800,
+      refreshRequest: {
+        active: false,
+        path: '/tmp/ticketboard-capacity.refresh',
+      },
+      snapshotPath: '/tmp/ticketboard-capacity-snapshot.json',
+    },
+    brief: {
+      blocked: [],
+      generatedAt: now,
+      lanes: ['CAP-1', 'CAP-2', 'CAP-3'].map((ticketId, index) => ({
+        action: `Start ${ticketId}.`,
+        automation: index === 0 ? 'Human checkpoint' : 'Start Codex lane',
+        confidence: 'high',
+        evidence: [`${ticketId} has independent scope`],
+        laneId: `${index === 0 ? 'focus' : 'parallel'}:${ticketId}`,
+        parallelSafe: true,
+        role: index === 0 ? 'focus' : 'parallel',
+        status: index === 0 ? 'Focus' : 'Brief-safe',
+        ticketId,
+        title: `Capacity lane ${ticketId}`,
+        workflowId: `ticket:${ticketId}`,
+        why: 'Mocked capacity mismatch.',
+      })),
+      next: [],
+      notes: [],
+      now: {
+        action: 'Start CAP-1.',
+        confidence: 'high',
+        evidence: ['CAP-1 is first.'],
+        finishedWhen: 'CAP-1 is handed off.',
+        ticketId: 'CAP-1',
+        title: 'Capacity lane CAP-1',
+        workflowId: 'ticket:CAP-1',
+        why: 'It is the focus lane.',
+      },
+      operatingMode: {
+        maxActiveLanes: 1,
+        rationale: 'Mock brief intentionally recommends more lanes than the hard max.',
+        recommendedActiveLanes: 3,
+        summary: 'Clamp inconsistent Codex capacity before selecting a batch.',
+      },
+      source: {
+        dashboardGeneratedAt,
+        evidenceFingerprint: 'capacity-fingerprint',
+        evidenceSnapshotPath: '/tmp/ticketboard-capacity-snapshot.json',
+        parallelReadinessFingerprint: 'capacity-readiness-fingerprint',
+        planDocPath: null,
+        planDocPaths: [],
+      },
+      staleSignals: [],
+      version: 1,
+    },
+    parallelReadiness: null,
+    parallelReadinessFingerprint: 'capacity-readiness-fingerprint',
+    path: '/tmp/ticketboard-capacity-brief.json',
     reason: null,
     status: 'ready',
     ttlSeconds: 600,

@@ -787,16 +787,18 @@ export function App() {
         recommendedActive: freshParallelPlan.recommendedActive,
         workflows: freshWorkflows,
       });
+      const actions = safeBatchLaneActions({
+        batch: freshBatch,
+        dashboard: freshDashboard,
+        laneLoad: freshLaneLoad,
+        lanes: freshParallelPlan.lanes,
+        workflows: freshWorkflows,
+      });
+      const capacityStopReason = safeBatchProjectedCapacityStopReason(actions, freshLaneLoad);
 
       return {
-        actions: safeBatchLaneActions({
-          batch: freshBatch,
-          dashboard: freshDashboard,
-          laneLoad: freshLaneLoad,
-          lanes: freshParallelPlan.lanes,
-          workflows: freshWorkflows,
-        }),
-        detail: freshBatch.detail,
+        actions: capacityStopReason ? [] : actions,
+        detail: capacityStopReason ?? freshBatch.detail,
       };
     } finally {
       setRefreshing(false);
@@ -3463,12 +3465,20 @@ function buildParallelPlan({
     if (selectedWorkflow && !lanes.some((lane) => lane.workflowId === selectedWorkflow.id)) {
       lanes.unshift(parallelLaneFromWorkflow(selectedWorkflow, 'focus', selectedWorkflow));
     }
-    const recommendedActive =
-      boundedLaneCount(brief?.operatingMode?.recommendedActiveLanes) ??
-      Math.min(2, lanes.filter((lane) => lane.role !== 'waiting').length || 1);
+    const hintedRecommendedActive = boundedLaneCount(
+      brief?.operatingMode?.recommendedActiveLanes,
+    );
+    const fallbackRecommendedActive = Math.min(
+      2,
+      lanes.filter((lane) => lane.role !== 'waiting').length || 1,
+    );
     const maxActive =
       boundedLaneCount(brief?.operatingMode?.maxActiveLanes) ??
-      Math.max(recommendedActive, 3);
+      Math.max(hintedRecommendedActive ?? fallbackRecommendedActive, 3);
+    const recommendedActive = Math.min(
+      hintedRecommendedActive ?? fallbackRecommendedActive,
+      maxActive,
+    );
     return {
       lanes,
       maxActive,
@@ -3993,6 +4003,21 @@ function safeBatchLaneActions({
   }
 
   return actions;
+}
+
+function safeBatchProjectedCapacityStopReason(
+  actions: Array<RunnableLaneAction>,
+  laneLoad: LaneLoad,
+) {
+  if (!actions.length) return null;
+  const projectedActive = laneLoad.activeCount + actions.length;
+  if (projectedActive > laneLoad.maxActive) {
+    return `Batch revalidated over the hard lane limit: ${moveCount(projectedActive, 'active lane')} would exceed ${moveCount(laneLoad.maxActive, 'lane')}.`;
+  }
+  if (projectedActive > laneLoad.recommendedActive) {
+    return `Batch revalidated over the planned lane budget: ${moveCount(projectedActive, 'active lane')} would exceed ${moveCount(laneLoad.recommendedActive, 'planned lane')}.`;
+  }
+  return null;
 }
 
 function parallelBatchFor({
