@@ -332,6 +332,7 @@ def build_workflow_evidence_snapshot(
             for ticket in dashboard.get("linearTickets", [])
         ],
         "projectFocus": summarize_project_focus(dashboard.get("linearTickets", [])),
+        "parallelReadiness": summarize_parallel_readiness(dashboard),
         "sourceDossiers": summarize_source_dossiers(dashboard),
         "prs": [
             {
@@ -407,7 +408,9 @@ def build_workflow_evidence_snapshot(
                 "parallel lane plan. Prefer live failing checks, active "
                 "tmux/worktree lanes, and review state over quiet strategic backlog. "
                 "Only mark lanes parallel-safe when their work can proceed without "
-                "overwriting the focus lane or depending on its result. Treat "
+                "overwriting the focus lane or depending on its result. Use "
+                "parallelReadiness for deterministic lane load, dependency, file "
+                "overlap, and suggested-wave evidence. Treat "
                 "recent handoffs as orchestration memory so launched/resumed lanes "
                 "are not immediately recommended again unless live evidence changed. "
                 "Use parallelRuns to remember which lanes were intentionally launched "
@@ -830,6 +833,678 @@ def summarize_source_dossiers(dashboard: dict[str, Any]) -> list[dict[str, Any]]
             },
         )
     return dossiers[:20]
+
+
+def summarize_parallel_readiness(dashboard: dict[str, Any]) -> dict[str, Any]:
+    edges = linear_dependency_edges(dashboard.get("linearTickets", []))
+    candidates = parallel_candidates(dashboard, edges)
+    pairwise = pairwise_parallel_conflicts(candidates, edges)
+    recommended_active = min(
+        2,
+        max(
+            1,
+            len(
+                [
+                    candidate
+                    for candidate in candidates
+                    if candidate.get("status") not in {"blocked", "done"}
+                ],
+            ),
+        ),
+    )
+    max_active = max(3, recommended_active)
+    active_count = sum(1 for candidate in candidates if candidate.get("activeLane"))
+    open_slots = max(0, recommended_active - active_count)
+    suggested_wave = suggested_parallel_wave(candidates, pairwise, open_slots)
+
+    return {
+        "candidateCount": len(candidates),
+        "laneLoad": {
+            "activeCount": active_count,
+            "maxActiveLanes": max_active,
+            "openSlots": open_slots,
+            "recommendedActiveLanes": recommended_active,
+        },
+        "blockerEdges": edges[:24],
+        "candidates": [
+            {
+                key: value
+                for key, value in candidate.items()
+                if key not in {"sortKey"}
+            }
+            for candidate in candidates[:16]
+        ],
+        "pairwise": pairwise[:32],
+        "suggestedWaves": [suggested_wave],
+        "summary": parallel_readiness_summary(
+            active_count=active_count,
+            blocked_count=sum(
+                1 for candidate in candidates if candidate.get("status") == "blocked"
+            ),
+            candidate_count=len(candidates),
+            open_slots=open_slots,
+            wave_count=len(suggested_wave.get("workflowIds", [])),
+        ),
+    }
+
+
+def parallel_candidates(
+    dashboard: dict[str, Any],
+    edges: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    ticket_rows = {
+        str(ticket.get("ticketId") or "").upper(): ticket
+        for ticket in dashboard.get("tickets", [])
+        if isinstance(ticket, dict) and ticket.get("ticketId")
+    }
+    linear_rows = {
+        str(ticket.get("ticketId") or "").upper(): ticket
+        for ticket in dashboard.get("linearTickets", [])
+        if isinstance(ticket, dict) and ticket.get("ticketId")
+    }
+    candidates: list[dict[str, Any]] = []
+
+    for ticket_id, ticket in ticket_rows.items():
+        candidates.append(
+            parallel_ticket_candidate(
+                dashboard=dashboard,
+                edges=edges,
+                linear=linear_rows.get(ticket_id),
+                ticket=ticket,
+                ticket_id=ticket_id,
+            ),
+        )
+
+    for ticket_id, linear in linear_rows.items():
+        if ticket_id in ticket_rows or linear_issue_done(linear):
+            continue
+        candidates.append(
+            parallel_ticket_candidate(
+                dashboard=dashboard,
+                edges=edges,
+                linear=linear,
+                ticket=None,
+                ticket_id=ticket_id,
+            ),
+        )
+
+    pr_ticket_ids = {
+        ticket_id
+        for candidate in candidates
+        for ticket_id in candidate.get("ticketIds", [])
+    }
+    for pr in dashboard.get("prs", []):
+        if not isinstance(pr, dict) or not isinstance(pr.get("number"), int):
+            continue
+        ticket_ids = [
+            str(ticket_id).upper()
+            for ticket_id in pr.get("ticketIds", [])
+            if str(ticket_id).strip()
+        ]
+        if ticket_ids and any(ticket_id in pr_ticket_ids for ticket_id in ticket_ids):
+            continue
+        candidates.append(parallel_pr_candidate(pr))
+
+    return sorted(candidates, key=lambda candidate: candidate["sortKey"])[:20]
+
+
+def parallel_ticket_candidate(
+    *,
+    dashboard: dict[str, Any],
+    edges: list[dict[str, Any]],
+    linear: dict[str, Any] | None,
+    ticket: dict[str, Any] | None,
+    ticket_id: str,
+) -> dict[str, Any]:
+    prs = dashboard_items_for_ticket(dashboard, "prs", ticket_id)
+    sessions = dashboard_items_for_ticket(dashboard, "codexSessions", ticket_id)
+    windows = dashboard_items_for_ticket(dashboard, "tmuxWindows", ticket_id)
+    worktrees = dashboard_items_for_ticket(dashboard, "worktrees", ticket_id)
+    paths = changed_paths_from_sources(prs, worktrees)
+    blockers = blockers_for_ticket(ticket_id, edges)
+    blocks = blocks_for_ticket(ticket_id, edges)
+    active_reasons = active_lane_reasons(sessions, windows, worktrees)
+    status = parallel_ticket_status(
+        active=bool(active_reasons),
+        blockers=blockers,
+        linear=linear,
+        prs=prs,
+        ticket=ticket,
+    )
+
+    return {
+        "activeLane": bool(active_reasons),
+        "activeReasons": active_reasons,
+        "blockedBy": blockers[:6],
+        "blocks": blocks[:6],
+        "changedPaths": paths[:16],
+        "changedZones": changed_path_zones(paths)[:8],
+        "cycleName": linear.get("cycleName") if linear else None,
+        "nextAction": ticket.get("nextAction") if ticket else None,
+        "priority": linear.get("priority") if linear else None,
+        "projectName": linear.get("projectName") if linear else None,
+        "prNumbers": [pr.get("number") for pr in prs if isinstance(pr.get("number"), int)],
+        "risk": ticket.get("risk") if ticket else None,
+        "sortKey": parallel_sort_key(status, bool(active_reasons), linear, ticket),
+        "state": ticket.get("state") if ticket else None,
+        "stateName": linear.get("stateName") if linear else None,
+        "stateType": linear.get("stateType") if linear else None,
+        "status": status,
+        "ticketIds": [ticket_id],
+        "title": (
+            ticket.get("title")
+            if ticket
+            else linear.get("title")
+            if linear
+            else ticket_id
+        ),
+        "updatedAt": linear.get("updatedAt") if linear else None,
+        "workflowId": f"ticket:{ticket_id}",
+    }
+
+
+def parallel_pr_candidate(pr: dict[str, Any]) -> dict[str, Any]:
+    paths = changed_paths_from_sources([pr], [])
+    status = parallel_pr_status(pr)
+    return {
+        "activeLane": False,
+        "activeReasons": [],
+        "blockedBy": [],
+        "blocks": [],
+        "changedPaths": paths[:16],
+        "changedZones": changed_path_zones(paths)[:8],
+        "cycleName": None,
+        "nextAction": None,
+        "priority": None,
+        "projectName": None,
+        "prNumbers": [pr.get("number")],
+        "risk": "medium",
+        "sortKey": (
+            status_rank(status),
+            99,
+            newest_first_timestamp(pr.get("updatedAt")),
+        ),
+        "state": None,
+        "stateName": None,
+        "stateType": None,
+        "status": status,
+        "ticketIds": [
+            str(ticket_id).upper()
+            for ticket_id in pr.get("ticketIds", [])
+            if str(ticket_id).strip()
+        ],
+        "title": pr.get("title"),
+        "updatedAt": pr.get("updatedAt"),
+        "workflowId": f"pr:{pr.get('number')}",
+    }
+
+
+def parallel_ticket_status(
+    *,
+    active: bool,
+    blockers: list[dict[str, Any]],
+    linear: dict[str, Any] | None,
+    prs: list[dict[str, Any]],
+    ticket: dict[str, Any] | None,
+) -> str:
+    if linear and linear_issue_done(linear):
+        return "done"
+    if blockers or ticket and ticket.get("state") == "blocked":
+        return "blocked"
+    if active:
+        return "active"
+    if any(pr_check_state(pr) == "red" for pr in prs):
+        return "fix-ci"
+    if (
+        any(pr_needs_review_response(pr) for pr in prs)
+        or ticket
+        and ticket.get("state") == "review"
+    ):
+        return "review"
+    if any(pr_ready_to_ship(pr) for pr in prs) or ticket and ticket.get("state") == "green":
+        return "ship"
+    if linear and linear.get("stateType") in {"backlog", "unstarted"}:
+        return "queued"
+    return "ready"
+
+
+def parallel_pr_status(pr: dict[str, Any]) -> str:
+    if pr_check_state(pr) == "red":
+        return "fix-ci"
+    if pr_needs_review_response(pr):
+        return "review"
+    if pr_ready_to_ship(pr):
+        return "ship"
+    return "review"
+
+
+def pr_needs_review_response(pr: dict[str, Any]) -> bool:
+    if pr.get("reviewDecision") == "CHANGES_REQUESTED":
+        return True
+    review_comments = pr.get("reviewComments")
+    return isinstance(review_comments, list) and len(review_comments) > 0
+
+
+def pr_ready_to_ship(pr: dict[str, Any]) -> bool:
+    return (
+        pr_check_state(pr) == "green"
+        and not pr.get("isDraft")
+        and pr.get("reviewDecision") in {"APPROVED", None}
+    )
+
+
+def active_lane_reasons(
+    sessions: list[dict[str, Any]],
+    windows: list[dict[str, Any]],
+    worktrees: list[dict[str, Any]],
+) -> list[str]:
+    reasons: list[str] = []
+    active_sessions = [session for session in sessions if is_active_codex_session(session)]
+    dirty_files = sum(int(worktree.get("dirtyCount") or 0) for worktree in worktrees)
+    prunable_count = sum(1 for worktree in worktrees if worktree.get("prunable"))
+    if active_sessions:
+        reasons.append(f"{len(active_sessions)} active Codex session(s)")
+    if windows:
+        reasons.append(f"{len(windows)} tmux window(s)")
+    if dirty_files:
+        reasons.append(f"{dirty_files} dirty file(s)")
+    if prunable_count:
+        reasons.append(f"{prunable_count} prunable worktree(s)")
+    return reasons
+
+
+def parallel_sort_key(
+    status: str,
+    active: bool,
+    linear: dict[str, Any] | None,
+    ticket: dict[str, Any] | None,
+) -> tuple[Any, ...]:
+    priority = linear.get("priority") if linear else None
+    updated_at = linear.get("updatedAt") if linear else ""
+    risk = ticket.get("risk") if ticket else None
+    return (
+        status_rank("active" if active else status),
+        int(priority) if isinstance(priority, int) and priority > 0 else 99,
+        risk_rank(str(risk or "")),
+        newest_first_timestamp(updated_at),
+    )
+
+
+def newest_first_timestamp(value: Any) -> float:
+    if not isinstance(value, str):
+        return 0
+    parsed = parse_iso_datetime(value)
+    if not parsed:
+        return 0
+    return -parsed.timestamp()
+
+
+def status_rank(status: str) -> int:
+    return {
+        "fix-ci": 0,
+        "review": 1,
+        "ship": 2,
+        "active": 3,
+        "ready": 4,
+        "queued": 5,
+        "blocked": 6,
+        "done": 7,
+    }.get(status, 8)
+
+
+def risk_rank(risk: str) -> int:
+    return {"high": 0, "medium": 1, "low": 2}.get(risk, 3)
+
+
+def linear_dependency_edges(tickets: Any) -> list[dict[str, Any]]:
+    if not isinstance(tickets, list):
+        return []
+    edges: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for ticket in tickets:
+        if not isinstance(ticket, dict):
+            continue
+        source = linear_issue_link(ticket)
+        if not source:
+            continue
+        for relation in ticket.get("relatedIssues", []):
+            if not isinstance(relation, dict):
+                continue
+            edge = dependency_edge_from_relation(source, relation)
+            if not edge:
+                continue
+            key = (
+                str(edge.get("blockerId") or ""),
+                str(edge.get("blockedId") or ""),
+                str(edge.get("relationType") or ""),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            edges.append(edge)
+    return edges
+
+
+def dependency_edge_from_relation(
+    source: dict[str, Any],
+    relation: dict[str, Any],
+) -> dict[str, Any] | None:
+    relation_type = normalize_relation_type(relation.get("relationType"))
+    related = relation.get("issue")
+    if not isinstance(related, dict) or not related.get("ticketId"):
+        return None
+    related_link = linear_issue_link(related)
+    if not related_link:
+        return None
+    if relation_type in {"blocked_by", "blocks_this"}:
+        return dependency_edge(
+            blocked=source,
+            blocker=related_link,
+            relation_type=relation_type,
+            source_ticket_id=source["ticketId"],
+        )
+    if relation_type in {"blocks", "this_blocks"}:
+        return dependency_edge(
+            blocked=related_link,
+            blocker=source,
+            relation_type=relation_type,
+            source_ticket_id=source["ticketId"],
+        )
+    return None
+
+
+def dependency_edge(
+    *,
+    blocked: dict[str, Any],
+    blocker: dict[str, Any],
+    relation_type: str,
+    source_ticket_id: str,
+) -> dict[str, Any]:
+    return {
+        "blockedId": blocked["ticketId"],
+        "blockedStateName": blocked.get("stateName"),
+        "blockedStateType": blocked.get("stateType"),
+        "blockedTitle": blocked.get("title"),
+        "blockerId": blocker["ticketId"],
+        "blockerStateName": blocker.get("stateName"),
+        "blockerStateType": blocker.get("stateType"),
+        "blockerTitle": blocker.get("title"),
+        "relationType": relation_type,
+        "sourceTicketId": source_ticket_id,
+    }
+
+
+def linear_issue_link(issue: dict[str, Any]) -> dict[str, Any] | None:
+    ticket_id = str(issue.get("ticketId") or "").strip().upper()
+    if not ticket_id:
+        return None
+    return {
+        "stateName": issue.get("stateName"),
+        "stateType": issue.get("stateType"),
+        "ticketId": ticket_id,
+        "title": issue.get("title"),
+        "url": issue.get("url"),
+    }
+
+
+def normalize_relation_type(value: Any) -> str:
+    normalized = re.sub(r"[\s-]+", "_", str(value or "").strip().lower())
+    if normalized in {"blocked", "blocked_by"}:
+        return "blocked_by"
+    if normalized == "blocks":
+        return "blocks"
+    return normalized
+
+
+def blockers_for_ticket(ticket_id: str, edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        edge
+        for edge in edges
+        if edge.get("blockedId") == ticket_id
+        and edge.get("blockerId") != ticket_id
+        and not linear_issue_state_done(edge.get("blockerStateType"))
+    ]
+
+
+def blocks_for_ticket(ticket_id: str, edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        edge
+        for edge in edges
+        if edge.get("blockerId") == ticket_id
+        and edge.get("blockedId") != ticket_id
+        and not linear_issue_state_done(edge.get("blockedStateType"))
+    ]
+
+
+def linear_issue_done(issue: dict[str, Any]) -> bool:
+    return linear_issue_state_done(issue.get("stateType")) or bool(issue.get("completedAt"))
+
+
+def linear_issue_state_done(state_type: Any) -> bool:
+    return state_type in {"completed", "canceled"}
+
+
+def changed_paths_from_sources(
+    prs: list[dict[str, Any]],
+    worktrees: list[dict[str, Any]],
+) -> list[str]:
+    paths: set[str] = set()
+    for pr in prs:
+        for file in pr.get("files", []):
+            if isinstance(file, dict):
+                add_changed_path(paths, file.get("path"))
+    for worktree in worktrees:
+        for line in worktree.get("statusLines", []):
+            for path in paths_from_status_line(str(line or "")):
+                add_changed_path(paths, path)
+    return sorted(paths)
+
+
+def add_changed_path(paths: set[str], value: Any) -> None:
+    normalized = normalize_changed_path(value)
+    if normalized:
+        paths.add(normalized)
+
+
+def paths_from_status_line(line: str) -> list[str]:
+    stripped = re.sub(r"^[ MADRCU?!]{1,2}\s+", "", line.strip())
+    if not stripped:
+        return []
+    if " -> " in stripped:
+        return [unquote_status_path(part) for part in stripped.split(" -> ")]
+    return [unquote_status_path(stripped)]
+
+
+def unquote_status_path(value: str) -> str:
+    return value.strip().strip('"')
+
+
+def normalize_changed_path(value: Any) -> str | None:
+    trimmed = str(value or "").strip()
+    if not trimmed:
+        return None
+    return re.sub(r"^\./+", "", trimmed)
+
+
+def changed_path_zones(paths: list[str]) -> list[str]:
+    zones = {
+        zone
+        for path in paths
+        if (zone := changed_path_zone(path))
+    }
+    return sorted(zones)
+
+
+def changed_path_zone(path: str) -> str | None:
+    normalized = normalize_changed_path(path)
+    if not normalized:
+        return None
+    parts = [part for part in normalized.split("/") if part]
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return parts[0]
+    return "/".join(parts[:-1])
+
+
+def pairwise_parallel_conflicts(
+    candidates: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    pairwise: list[dict[str, Any]] = []
+    limited = candidates[:10]
+    for left_index, left in enumerate(limited):
+        for right in limited[left_index + 1 :]:
+            item = pairwise_parallel_item(left, right, edges)
+            if item:
+                pairwise.append(item)
+    return pairwise
+
+
+def pairwise_parallel_item(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    edges: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    dependency = dependency_between_candidates(left, right, edges)
+    left_paths = list(left.get("changedPaths", []))
+    right_paths = list(right.get("changedPaths", []))
+    overlap = intersect_values(left_paths, right_paths)
+    shared_zones = intersect_values(
+        list(left.get("changedZones", [])),
+        list(right.get("changedZones", [])),
+    )
+    base = {
+        "leftWorkflowId": left.get("workflowId"),
+        "rightWorkflowId": right.get("workflowId"),
+    }
+    if dependency:
+        return {
+            **base,
+            "reason": f"{dependency['blockerId']} blocks {dependency['blockedId']}.",
+            "status": "blocked",
+            "type": "linear-dependency",
+        }
+    if overlap:
+        return {
+            **base,
+            "overlapPaths": overlap[:8],
+            "reason": f"Both lanes touch {', '.join(overlap[:3])}.",
+            "status": "blocked",
+            "type": "file-overlap",
+        }
+    if shared_zones:
+        return {
+            **base,
+            "reason": f"Both lanes touch {', '.join(shared_zones[:3])}.",
+            "sharedZones": shared_zones[:8],
+            "status": "guarded",
+            "type": "same-area",
+        }
+    if left_paths and right_paths:
+        return {
+            **base,
+            "reason": "No file or Linear dependency conflict is visible.",
+            "status": "safe",
+            "type": "independent",
+        }
+    return {
+        **base,
+        "reason": "Changed-file evidence is incomplete; verify before running together.",
+        "status": "guarded",
+        "type": "missing-file-evidence",
+    }
+
+
+def dependency_between_candidates(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    edges: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    left_ids = set(left.get("ticketIds", []))
+    right_ids = set(right.get("ticketIds", []))
+    for edge in edges:
+        if linear_issue_state_done(edge.get("blockerStateType")):
+            continue
+        blocked_id = str(edge.get("blockedId") or "")
+        blocker_id = str(edge.get("blockerId") or "")
+        if (
+            blocked_id in left_ids
+            and blocker_id in right_ids
+            or blocked_id in right_ids
+            and blocker_id in left_ids
+        ):
+            return edge
+    return None
+
+
+def intersect_values(left: list[Any], right: list[Any]) -> list[str]:
+    right_set = {str(value) for value in right}
+    return [str(value) for value in left if str(value) in right_set]
+
+
+def suggested_parallel_wave(
+    candidates: list[dict[str, Any]],
+    pairwise: list[dict[str, Any]],
+    open_slots: int,
+) -> dict[str, Any]:
+    if open_slots <= 0:
+        return {
+            "id": "wave:capacity",
+            "reason": "No open Codex lane capacity is available.",
+            "title": "At capacity",
+            "workflowIds": [],
+        }
+    pair_status = {
+        frozenset([str(item.get("leftWorkflowId")), str(item.get("rightWorkflowId"))]): item
+        for item in pairwise
+    }
+    selected: list[str] = []
+    for candidate in candidates:
+        workflow_id = str(candidate.get("workflowId") or "")
+        if not workflow_id or candidate.get("activeLane"):
+            continue
+        if candidate.get("status") in {"blocked", "done"}:
+            continue
+        if candidate.get("blockedBy"):
+            continue
+        if not candidate.get("changedPaths"):
+            continue
+        if any(
+            pair_status.get(frozenset([workflow_id, existing]), {}).get("status")
+            != "safe"
+            for existing in selected
+        ):
+            continue
+        selected.append(workflow_id)
+        if len(selected) >= open_slots:
+            break
+    return {
+        "id": "wave:ready",
+        "reason": (
+            "Candidates have open capacity, changed-file evidence, and no visible "
+            "pairwise file or Linear dependency conflict."
+            if selected
+            else "No candidate has enough evidence to auto-start in parallel right now."
+        ),
+        "title": "Ready parallel wave" if selected else "No safe auto-start wave",
+        "workflowIds": selected,
+    }
+
+
+def parallel_readiness_summary(
+    *,
+    active_count: int,
+    blocked_count: int,
+    candidate_count: int,
+    open_slots: int,
+    wave_count: int,
+) -> str:
+    return (
+        f"{candidate_count} candidate lane(s); {active_count} active; "
+        f"{open_slots} open slot(s); {blocked_count} blocked; "
+        f"{wave_count} suggested for the next wave."
+    )
 
 
 def compact_evidence_text(value: Any, limit: int) -> str:

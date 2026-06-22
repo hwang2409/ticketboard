@@ -687,6 +687,77 @@ function mockDependencyEvidenceSnapshot(workflowBrief) {
     path: '/tmp/ticketboard-dependency-snapshot.json',
     snapshot: {
       parallelRuns: [],
+      parallelReadiness: {
+        blockerEdges: [
+          {
+            blockedId: 'DEP-2',
+            blockedStateName: 'Todo',
+            blockedStateType: 'unstarted',
+            blockedTitle: 'Build dependent workflow',
+            blockerId: 'DEP-1',
+            blockerStateName: 'In Progress',
+            blockerStateType: 'started',
+            blockerTitle: 'Build dependency first',
+            relationType: 'blocks',
+            sourceTicketId: 'DEP-1',
+          },
+        ],
+        candidateCount: 2,
+        candidates: [
+          {
+            activeLane: false,
+            activeReasons: [],
+            blockedBy: [],
+            blocks: [],
+            changedPaths: ['src/dependency.ts'],
+            changedZones: ['src'],
+            priority: 2,
+            projectName: 'Dependency Project',
+            status: 'ready',
+            ticketIds: ['DEP-1'],
+            title: 'Build dependency first',
+            workflowId: 'ticket:DEP-1',
+          },
+          {
+            activeLane: false,
+            activeReasons: [],
+            blockedBy: [],
+            blocks: [],
+            changedPaths: ['server/dependent.py'],
+            changedZones: ['server'],
+            priority: 2,
+            projectName: 'Dependency Project',
+            status: 'blocked',
+            ticketIds: ['DEP-2'],
+            title: 'Build dependent workflow',
+            workflowId: 'ticket:DEP-2',
+          },
+        ],
+        laneLoad: {
+          activeCount: 0,
+          maxActiveLanes: 3,
+          openSlots: 2,
+          recommendedActiveLanes: 2,
+        },
+        pairwise: [
+          {
+            leftWorkflowId: 'ticket:DEP-1',
+            reason: 'DEP-1 blocks DEP-2.',
+            rightWorkflowId: 'ticket:DEP-2',
+            status: 'blocked',
+            type: 'linear-dependency',
+          },
+        ],
+        suggestedWaves: [
+          {
+            id: 'wave:ready',
+            reason: 'Only unblocked work is safe.',
+            title: 'Ready parallel wave',
+            workflowIds: ['ticket:DEP-1'],
+          },
+        ],
+        summary: '2 candidate lane(s); 0 active; 2 open slot(s); 1 blocked; 1 suggested for the next wave.',
+      },
       planDocs: [],
       planningSignals: {
         docs: [],
@@ -1261,6 +1332,7 @@ function validateWorkflowEvidenceShape(response) {
   const recentHandoffs = response?.snapshot?.recentHandoffs;
   const planDocs = response?.snapshot?.planDocs;
   const planningSignals = response?.snapshot?.planningSignals;
+  const parallelReadiness = response?.snapshot?.parallelReadiness;
   const parallelRuns = response?.snapshot?.parallelRuns;
   const prs = response?.snapshot?.prs;
   const refreshRequest = response?.snapshot?.refreshRequest;
@@ -1277,6 +1349,14 @@ function validateWorkflowEvidenceShape(response) {
     !Array.isArray(planningSignals.docs) ||
     !Array.isArray(planningSignals.sections) ||
     !Array.isArray(planningSignals.ticketIds) ||
+    !parallelReadiness ||
+    typeof parallelReadiness !== 'object' ||
+    !parallelReadiness.laneLoad ||
+    typeof parallelReadiness.laneLoad !== 'object' ||
+    !Array.isArray(parallelReadiness.candidates) ||
+    !Array.isArray(parallelReadiness.blockerEdges) ||
+    !Array.isArray(parallelReadiness.pairwise) ||
+    !Array.isArray(parallelReadiness.suggestedWaves) ||
     !Array.isArray(parallelRuns) ||
     !Array.isArray(recentHandoffs) ||
     !Array.isArray(prs) ||
@@ -1289,9 +1369,10 @@ function validateWorkflowEvidenceShape(response) {
     !verification.commands ||
     typeof verification.commands !== 'object'
   ) {
-    throw new Error('Expected workflow evidence snapshot to include plan docs, source dossiers, parallel runs, recent handoffs, refresh requests, PRs, and verification hints');
+    throw new Error('Expected workflow evidence snapshot to include plan docs, source dossiers, parallel readiness, parallel runs, recent handoffs, refresh requests, PRs, and verification hints');
   }
   validateRefreshRequestShape(refreshRequest);
+  validateParallelReadinessShape(parallelReadiness);
   if ('ageSeconds' in refreshRequest) {
     throw new Error('Expected workflow evidence refresh request to omit volatile ageSeconds');
   }
@@ -1345,6 +1426,51 @@ function validateWorkflowEvidenceShape(response) {
       !Array.isArray(run.handoffs)
     ) {
       throw new Error(`Expected parallel run ${index} to include batch metadata and handoffs`);
+    }
+  }
+}
+
+function validateParallelReadinessShape(readiness) {
+  for (const key of ['activeCount', 'maxActiveLanes', 'openSlots', 'recommendedActiveLanes']) {
+    if (!Number.isFinite(readiness.laneLoad[key])) {
+      throw new Error(`Expected parallel readiness laneLoad.${key}`);
+    }
+  }
+  for (const [index, candidate] of readiness.candidates.entries()) {
+    if (
+      !candidate ||
+      typeof candidate !== 'object' ||
+      typeof candidate.workflowId !== 'string' ||
+      !Array.isArray(candidate.ticketIds) ||
+      !Array.isArray(candidate.changedPaths) ||
+      !Array.isArray(candidate.changedZones) ||
+      !Array.isArray(candidate.blockedBy) ||
+      !Array.isArray(candidate.blocks)
+    ) {
+      throw new Error(`Expected parallel readiness candidate ${index} to include lane evidence`);
+    }
+  }
+  for (const [index, pair] of readiness.pairwise.entries()) {
+    if (
+      !pair ||
+      typeof pair !== 'object' ||
+      typeof pair.leftWorkflowId !== 'string' ||
+      typeof pair.rightWorkflowId !== 'string' ||
+      typeof pair.status !== 'string' ||
+      typeof pair.reason !== 'string'
+    ) {
+      throw new Error(`Expected parallel readiness pair ${index} to include status and reason`);
+    }
+  }
+  for (const [index, wave] of readiness.suggestedWaves.entries()) {
+    if (
+      !wave ||
+      typeof wave !== 'object' ||
+      typeof wave.id !== 'string' ||
+      !Array.isArray(wave.workflowIds) ||
+      typeof wave.reason !== 'string'
+    ) {
+      throw new Error(`Expected parallel readiness wave ${index} to include workflow ids and reason`);
     }
   }
 }
