@@ -2622,6 +2622,9 @@ function ParallelLanesPanel({
     lanes: plan.lanes,
     workflows,
   });
+  const nextLaneUnavailableReason = nextLaneAction
+    ? null
+    : nextSafeLaneUnavailableReason(batch);
   const waves = buildParallelWaves(batch);
 
   return (
@@ -2654,7 +2657,13 @@ function ParallelLanesPanel({
               title={`Run next safe lane: ${nextLaneAction.guard.reason}`}
             />
           ) : (
-            <span>No safe Codex lane</span>
+            <span
+              className="parallel-next-blocked"
+              title={nextLaneUnavailableReason ?? undefined}
+            >
+              <b>No safe Codex lane</b>
+              <em>{nextLaneUnavailableReason}</em>
+            </span>
           )}
         </div>
       </div>
@@ -3987,6 +3996,23 @@ function nextSafeLaneAction({
     }
   }
   return null;
+}
+
+function nextSafeLaneUnavailableReason(batch: ParallelBatch) {
+  const blockedDecision =
+    batch.decisions.find(
+      (decision) =>
+        decision.status === 'guarded' &&
+        (decision.role === 'parallel' || decision.role === 'cleanup'),
+    ) ??
+    batch.decisions.find(
+      (decision) =>
+        decision.status === 'waiting' &&
+        (decision.role === 'parallel' || decision.role === 'cleanup'),
+    ) ??
+    batch.decisions.find((decision) => decision.status === 'guarded') ??
+    batch.decisions.find((decision) => decision.status === 'waiting');
+  return blockedDecision?.reason ?? 'No lane fits the current capacity and safety checks.';
 }
 
 function safeBatchLaneActions({

@@ -494,6 +494,10 @@ async function verifyReadinessGuardedBatch() {
     if ((await page.locator('[data-testid="run-safe-batch"]').count()) > 0) {
       throw new Error('Expected backend-readiness-guarded batch to hide the safe-batch runner');
     }
+    const nextBlockedText = await page.locator('.parallel-next-blocked').innerText();
+    if (!nextBlockedText.includes('Parallel readiness says same-area')) {
+      throw new Error(`Expected no-safe-lane reason to cite backend readiness, got "${nextBlockedText}"`);
+    }
 
     const matrixText = await page.locator('[data-lane-matrix]').innerText();
     if (!matrixText.includes('Parallel readiness says same-area')) {

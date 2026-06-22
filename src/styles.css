@@ -2010,10 +2010,32 @@ button.unlock-item:focus-visible {
 }
 
 .parallel-next-action > span {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
   align-self: center;
   color: var(--muted);
   font-size: 0.68rem;
   text-align: right;
+}
+
+.parallel-next-action b,
+.parallel-next-action em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.parallel-next-action b {
+  color: var(--foreground);
+  font-weight: 650;
+}
+
+.parallel-next-action em {
+  font-size: 0.66rem;
+  font-style: normal;
+  line-height: 1.25;
 }
 
 .parallel-next-action .lane-action-button {
