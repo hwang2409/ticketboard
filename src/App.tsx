@@ -784,6 +784,7 @@ export function App() {
         dashboard: freshDashboard,
         laneLoad: freshLaneLoad,
         lanes: freshParallelPlan.lanes,
+        readiness: freshBriefResponse.parallelReadiness ?? null,
         recommendedActive: freshParallelPlan.recommendedActive,
         workflows: freshWorkflows,
       });
@@ -1808,12 +1809,17 @@ function ProjectPlanRail({
         dashboard,
         laneLoad,
         lanes: parallelPlan.lanes,
+        readiness: workflowBriefStatus?.parallelReadiness ?? null,
         recommendedActive: parallelPlan.recommendedActive,
         workflows,
       })
     : null;
   const laneMatrix = parallelPlan
-    ? buildLaneMatrix({ lanes: parallelPlan.lanes, workflows })
+    ? buildLaneMatrix({
+        lanes: parallelPlan.lanes,
+        readiness: workflowBriefStatus?.parallelReadiness ?? null,
+        workflows,
+      })
     : emptyLaneMatrix();
   const parallelRuns = buildParallelRunGroups(handoffs, workflows);
   const completionForecast = buildCompletionForecast({
@@ -1904,6 +1910,7 @@ function ProjectPlanRail({
           onPrepareActions={onPrepareSafeBatchActions}
           onSelect={onSelect}
           plan={parallelPlan}
+          readiness={workflowBriefStatus?.parallelReadiness ?? null}
           selectedWorkflowId={selectedWorkflowId}
           workflows={workflows}
         />
@@ -2583,6 +2590,7 @@ function ParallelLanesPanel({
   onPrepareActions,
   onSelect,
   plan,
+  readiness,
   selectedWorkflowId,
   workflows,
 }: {
@@ -2594,6 +2602,7 @@ function ParallelLanesPanel({
   onPrepareActions: () => Promise<BatchActionPreparation>;
   onSelect: (id: string) => void;
   plan: ParallelPlan;
+  readiness: ParallelReadiness | null;
   selectedWorkflowId: string;
   workflows: Array<WorkflowItem>;
 }) {
@@ -2602,6 +2611,7 @@ function ParallelLanesPanel({
     dashboard,
     laneLoad,
     lanes: plan.lanes,
+    readiness,
     workflows,
   });
   const batchPacket = buildParallelBatchPacket({ batch, dashboard, plan, workflows });
@@ -3939,11 +3949,13 @@ function nextSafeLaneAction({
   dashboard,
   laneLoad,
   lanes,
+  readiness,
   workflows,
 }: {
   dashboard: DashboardData;
   laneLoad: LaneLoad;
   lanes: Array<ParallelLane>;
+  readiness: ParallelReadiness | null;
   workflows: Array<WorkflowItem>;
 }): RunnableLaneAction | null {
   const focusLane = lanes.find((lane) => lane.role === 'focus') ?? null;
@@ -3958,7 +3970,14 @@ function nextSafeLaneAction({
       ? workflows.find((candidate) => candidate.id === lane.workflowId) ?? null
       : null;
     if (!workflow || unresolvedWorkflowBlocker(workflow, dependencyEdges)) continue;
+    if (readinessCandidateGuardReason(workflow.id, readiness)) continue;
     if (focusWorkflow && workflowDependencyConflict(workflow, focusWorkflow)) continue;
+    if (
+      focusWorkflow &&
+      readinessPairGuardReason(workflow.id, focusWorkflow.id, readiness)
+    ) {
+      continue;
+    }
     const laneAction = laneActionFor({ dashboard, lane, laneLoad, workflow });
     if (
       laneAction?.guard.runnable &&
@@ -4024,12 +4043,14 @@ function parallelBatchFor({
   dashboard,
   laneLoad,
   lanes,
+  readiness,
   recommendedActive,
   workflows,
 }: {
   dashboard: DashboardData;
   laneLoad: LaneLoad;
   lanes: Array<ParallelLane>;
+  readiness: ParallelReadiness | null;
   recommendedActive: number;
   workflows: Array<WorkflowItem>;
 }): ParallelBatch {
@@ -4081,6 +4102,13 @@ function parallelBatchFor({
       continue;
     }
 
+    const readinessGuard = readinessCandidateGuardReason(workflow.id, readiness);
+    if (readinessGuard) {
+      guardedCount += 1;
+      decisions.push(batchDecision(lane, 'guarded', readinessGuard));
+      continue;
+    }
+
     const dependencyConflict = batchDependencyConflictReason(
       lane,
       workflow,
@@ -4092,6 +4120,21 @@ function parallelBatchFor({
     if (dependencyConflict) {
       guardedCount += 1;
       decisions.push(batchDecision(lane, 'guarded', dependencyConflict));
+      continue;
+    }
+
+    const readinessConflict = batchReadinessConflictReason(
+      lane,
+      workflow,
+      [
+        ...(focusLane && focusWorkflow ? [{ lane: focusLane, workflow: focusWorkflow }] : []),
+        ...selected,
+      ],
+      readiness,
+    );
+    if (readinessConflict) {
+      guardedCount += 1;
+      decisions.push(batchDecision(lane, 'guarded', readinessConflict));
       continue;
     }
 
@@ -4277,9 +4320,11 @@ function parallelWaveSummary({
 
 function buildLaneMatrix({
   lanes,
+  readiness,
   workflows,
 }: {
   lanes: Array<ParallelLane>;
+  readiness: ParallelReadiness | null;
   workflows: Array<WorkflowItem>;
 }): LaneMatrix {
   const workflowById = new Map(workflows.map((workflow) => [workflow.id, workflow]));
@@ -4295,6 +4340,7 @@ function buildLaneMatrix({
     for (let rightIndex = leftIndex + 1; rightIndex < candidates.length; rightIndex += 1) {
       const item = laneMatrixItem({
         left: candidates[leftIndex],
+        readiness,
         right: candidates[rightIndex],
         workflowById,
       });
@@ -4336,10 +4382,12 @@ function emptyLaneMatrix(): LaneMatrix {
 
 function laneMatrixItem({
   left,
+  readiness,
   right,
   workflowById,
 }: {
   left: ParallelLane;
+  readiness: ParallelReadiness | null;
   right: ParallelLane;
   workflowById: Map<string, WorkflowItem>;
 }): LaneMatrixItem | null {
@@ -4356,6 +4404,21 @@ function laneMatrixItem({
   const rightZones = changedPathZones(rightPaths);
   const sharedZones = intersectPaths(leftZones, rightZones);
   const title = `${matrixLaneLabel(left)} + ${matrixLaneLabel(right)}`;
+  const readinessConflict = readinessPairGuardReason(
+    left.workflowId,
+    right.workflowId,
+    readiness,
+  );
+  if (readinessConflict) {
+    return {
+      detail: readinessConflict.reason,
+      id: `matrix:${left.id}:${right.id}:readiness`,
+      meta: 'Parallel readiness',
+      title,
+      tone: readinessConflict.status === 'blocked' ? 'blocked' : 'waiting',
+      workflowIds: [left.workflowId, right.workflowId],
+    };
+  }
 
   if (dependency) {
     return {
@@ -4464,6 +4527,56 @@ function batchDependencyConflictReason(
     }
   }
   return null;
+}
+
+function batchReadinessConflictReason(
+  lane: ParallelLane,
+  workflow: WorkflowItem,
+  selected: Array<{ lane: ParallelLane; workflow: WorkflowItem }>,
+  readiness: ParallelReadiness | null,
+) {
+  for (const item of selected) {
+    const conflict = readinessPairGuardReason(workflow.id, item.workflow.id, readiness);
+    if (conflict) {
+      return `${batchLaneLabel(lane)} must serialize with ${batchLaneLabel(item.lane)}; ${conflict.reason}`;
+    }
+  }
+  return null;
+}
+
+function readinessCandidateGuardReason(
+  workflowId: string,
+  readiness: ParallelReadiness | null,
+) {
+  const candidate = readiness?.candidates.find((item) => item.workflowId === workflowId);
+  if (!candidate) return null;
+  const blocker = candidate.blockedBy[0];
+  if (blocker) {
+    return `Parallel readiness says ${blocker.blockerId} blocks ${blocker.blockedId}.`;
+  }
+  if (candidate.status === 'blocked') {
+    return 'Parallel readiness marks this lane blocked.';
+  }
+  return null;
+}
+
+function readinessPairGuardReason(
+  leftWorkflowId: string | null,
+  rightWorkflowId: string | null,
+  readiness: ParallelReadiness | null,
+) {
+  if (!leftWorkflowId || !rightWorkflowId || !readiness) return null;
+  const pair = readiness.pairwise.find((item) =>
+    (item.leftWorkflowId === leftWorkflowId && item.rightWorkflowId === rightWorkflowId) ||
+      (item.leftWorkflowId === rightWorkflowId && item.rightWorkflowId === leftWorkflowId),
+  );
+  if (!pair || (pair.status !== 'blocked' && pair.status !== 'guarded')) {
+    return null;
+  }
+  return {
+    reason: `Parallel readiness says ${pair.type}: ${pair.reason}`,
+    status: pair.status,
+  };
 }
 
 function workflowDependencyConflict(

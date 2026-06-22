@@ -19,6 +19,7 @@ try {
     width: 390,
   });
   await verifyDependencyGuardedBatch();
+  await verifyReadinessGuardedBatch();
   await verifyBriefCapacityClamp();
   await verifyTokensPage({
     height: 900,
@@ -448,6 +449,61 @@ async function verifyDependencyGuardedBatch() {
   }
 }
 
+async function verifyReadinessGuardedBatch() {
+  const dashboard = mockCapacityDashboard();
+  const workflowBrief = mockReadinessGuardBrief(dashboard.generatedAt);
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  page.on('console', (message) => {
+    if (message.type() === 'error') {
+      errors.push(message.text());
+    }
+  });
+  page.on('pageerror', (error) => errors.push(error.message));
+
+  await page.route('**/api/dashboard**', async (route) => {
+    await route.fulfill({
+      body: JSON.stringify(dashboard),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+  await page.route('**/api/workflow-brief**', async (route) => {
+    await route.fulfill({
+      body: JSON.stringify(workflowBrief),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+  await mockUserStateRoutes(page);
+
+  try {
+    await page.goto(`${baseUrl}/?readiness-guard=${Date.now()}`, {
+      timeout: API_TIMEOUT_MS,
+      waitUntil: 'domcontentloaded',
+    });
+    await page.waitForSelector('[data-app-ready="true"]', { timeout: 20_000 });
+    await page.waitForSelector('[data-parallel-batch]', { timeout: 10_000 });
+
+    const guardedText = await page
+      .locator('[data-batch-decision-status="guarded"]')
+      .allInnerTexts();
+    const joinedGuardedText = guardedText.join('\n');
+    if (!joinedGuardedText.includes('Parallel readiness says same-area')) {
+      throw new Error(`Expected backend readiness guard in batch decisions, got "${joinedGuardedText}"`);
+    }
+    if ((await page.locator('[data-testid="run-safe-batch"]').count()) > 0) {
+      throw new Error('Expected backend-readiness-guarded batch to hide the safe-batch runner');
+    }
+
+    const matrixText = await page.locator('[data-lane-matrix]').innerText();
+    if (!matrixText.includes('Parallel readiness says same-area')) {
+      throw new Error(`Expected lane matrix to expose backend readiness guard, got "${matrixText}"`);
+    }
+  } finally {
+    await page.close();
+  }
+}
+
 async function verifyBriefCapacityClamp() {
   const dashboard = mockCapacityDashboard();
   const workflowBrief = mockCapacityBrief(dashboard.generatedAt);
@@ -850,6 +906,69 @@ function mockCapacityBrief(dashboardGeneratedAt) {
     reason: null,
     status: 'ready',
     ttlSeconds: 600,
+  };
+}
+
+function mockReadinessGuardBrief(dashboardGeneratedAt) {
+  const brief = mockCapacityBrief(dashboardGeneratedAt);
+  const ids = ['CAP-1', 'CAP-2'];
+  return {
+    ...brief,
+    brief: {
+      ...brief.brief,
+      lanes: brief.brief.lanes.filter((lane) => ids.includes(lane.ticketId)),
+      operatingMode: {
+        maxActiveLanes: 2,
+        rationale: 'Mock readiness says the second lane shares a risky area.',
+        recommendedActiveLanes: 2,
+        summary: 'Respect backend readiness pairwise guards.',
+      },
+    },
+    parallelReadiness: {
+      blockerEdges: [],
+      candidateCount: ids.length,
+      candidates: ids.map((ticketId) => ({
+        activeLane: false,
+        activeReasons: [],
+        blockedBy: [],
+        blocks: [],
+        changedPaths: [`src/${ticketId.toLowerCase()}.ts`],
+        changedZones: ['src'],
+        priority: 2,
+        projectName: 'Capacity Project',
+        prNumbers: [],
+        status: 'ready',
+        ticketIds: [ticketId],
+        title: `Capacity lane ${ticketId}`,
+        workflowId: `ticket:${ticketId}`,
+      })),
+      laneLoad: {
+        activeCount: 0,
+        maxActiveLanes: 2,
+        openSlots: 2,
+        recommendedActiveLanes: 2,
+      },
+      pairwise: [
+        {
+          leftWorkflowId: 'ticket:CAP-1',
+          reason: 'Both lanes need the same frontend surface.',
+          rightWorkflowId: 'ticket:CAP-2',
+          sharedZones: ['src'],
+          status: 'guarded',
+          type: 'same-area',
+        },
+      ],
+      suggestedWaves: [
+        {
+          id: 'wave:guarded',
+          reason: 'CAP-2 should wait for CAP-1.',
+          title: 'Guarded wave',
+          workflowIds: ['ticket:CAP-1'],
+        },
+      ],
+      summary: '2 candidate lane(s); backend readiness guards one pair.',
+    },
+    parallelReadinessFingerprint: 'readiness-guard-fingerprint',
   };
 }
 
