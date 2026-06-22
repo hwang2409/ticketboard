@@ -621,6 +621,11 @@ async function verifyParallelRunMemoryGuardsBatch() {
     if ((await page.locator('[data-testid="run-safe-batch"]').count()) > 0) {
       throw new Error('Expected unresolved parallel-run memory to hide the safe-batch runner');
     }
+    await page.locator('[data-safe-batch-memory-ack]').click();
+    await page.waitForSelector('[data-testid="run-safe-batch"]', { timeout: 10_000 });
+    if ((await page.locator('[data-safe-batch-memory-guard]').count()) > 0) {
+      throw new Error('Expected acknowledging parallel-run memory to clear the batch guard');
+    }
   } finally {
     await page.close();
   }

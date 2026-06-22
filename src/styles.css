@@ -2239,11 +2239,14 @@ button.parallel-wave-lane:focus-visible {
   border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--border));
   background: color-mix(in srgb, var(--warning) 8%, var(--surface));
   color: var(--foreground);
+  cursor: pointer;
   font-size: 0.68rem;
+  text-align: left;
 }
 
 .parallel-batch-run-guard strong,
-.parallel-batch-run-guard em {
+.parallel-batch-run-guard em,
+.parallel-batch-run-guard small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2252,6 +2255,18 @@ button.parallel-wave-lane:focus-visible {
 .parallel-batch-run-guard em {
   color: var(--muted);
   font-style: normal;
+}
+
+.parallel-batch-run-guard small {
+  color: var(--warning);
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.parallel-batch-run-guard:hover,
+.parallel-batch-run-guard:focus-visible {
+  border-color: color-mix(in srgb, var(--warning) 65%, var(--border));
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
 }
 
 .parallel-batch-actions .action-result {

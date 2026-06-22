@@ -112,6 +112,7 @@ type ParallelRunGroup = {
 
 type ParallelRunGuard = {
   detail: string;
+  dismissId: string;
   group: ParallelRunGroup;
   title: string;
 };
@@ -641,7 +642,7 @@ export function App() {
     () => buildModeCounts(workflows, skippedIds, query),
     [query, skippedIds, workflows],
   );
-  const hiddenCount = skippedIds.size;
+  const hiddenCount = workflows.filter((workflow) => skippedIds.has(workflow.id)).length;
   const projectPlan = useMemo(
     () =>
       dashboard
@@ -680,6 +681,15 @@ export function App() {
     setLocalState((current) => dismissWorkflowInState(current, workflow.id));
     setSelectedWorkflowId(null);
     void persistDismissedWorkflow(workflow.id).then((serverState) => {
+      if (serverState) {
+        setLocalState((current) => mergeLocalState(current, serverState));
+      }
+    });
+  }, []);
+
+  const handleAcknowledgeParallelRunGuard = useCallback((dismissId: string) => {
+    setLocalState((current) => dismissWorkflowInState(current, dismissId));
+    void persistDismissedWorkflow(dismissId).then((serverState) => {
       if (serverState) {
         setLocalState((current) => mergeLocalState(current, serverState));
       }
@@ -804,6 +814,7 @@ export function App() {
       });
       const freshRunGuard = unresolvedParallelRunGuard(
         buildParallelRunGroups(freshUserState.handoffs, freshWorkflows),
+        freshUserState.dismissed,
       );
       if (freshRunGuard) {
         return {
@@ -916,10 +927,12 @@ export function App() {
               />
               <ProjectPlanRail
                 dashboard={dashboard}
+                dismissed={localState.dismissed}
                 handoffs={localState.handoffs}
                 hiddenCount={hiddenCount}
                 mode={mode}
                 modeCounts={modeCounts}
+                onAcknowledgeParallelRunGuard={handleAcknowledgeParallelRunGuard}
                 onModeChange={setMode}
                 onQueryChange={setQuery}
                 onPrepareSafeBatchActions={prepareSafeBatchActions}
@@ -1782,10 +1795,12 @@ function InfoColumn({
 
 function ProjectPlanRail({
   dashboard,
+  dismissed,
   handoffs,
   hiddenCount,
   mode,
   modeCounts,
+  onAcknowledgeParallelRunGuard,
   onModeChange,
   onQueryChange,
   onPrepareSafeBatchActions,
@@ -1802,10 +1817,12 @@ function ProjectPlanRail({
   workflows,
 }: {
   dashboard: DashboardData;
+  dismissed: Record<string, DismissedWorkflow>;
   handoffs: Array<HandoffEvent>;
   hiddenCount: number;
   mode: WorkflowMode;
   modeCounts: Record<WorkflowMode, number>;
+  onAcknowledgeParallelRunGuard: (dismissId: string) => void;
   onModeChange: (mode: WorkflowMode) => void;
   onQueryChange: (query: string) => void;
   onPrepareSafeBatchActions: () => Promise<BatchActionPreparation>;
@@ -1845,7 +1862,7 @@ function ProjectPlanRail({
       })
     : emptyLaneMatrix();
   const parallelRuns = buildParallelRunGroups(handoffs, workflows);
-  const parallelRunGuard = unresolvedParallelRunGuard(parallelRuns);
+  const parallelRunGuard = unresolvedParallelRunGuard(parallelRuns, dismissed);
   const completionForecast = buildCompletionForecast({
     dashboard,
     parallelBatch,
@@ -1929,6 +1946,7 @@ function ProjectPlanRail({
           batch={parallelBatch}
           dashboard={dashboard}
           laneLoad={laneLoad}
+          onAcknowledgeRunGuard={onAcknowledgeParallelRunGuard}
           onActionComplete={onWorkflowActionComplete}
           onBatchComplete={onWorkflowBatchComplete}
           onPrepareActions={onPrepareSafeBatchActions}
@@ -2460,17 +2478,30 @@ function parallelRunNextAction(status: ParallelRunGroup['status']) {
   return 'Batch is cleared; consider the next wave only if readiness still allows it.';
 }
 
-function unresolvedParallelRunGuard(groups: Array<ParallelRunGroup>): ParallelRunGuard | null {
-  const group = groups.find((item) => item.status !== 'cleared');
+function unresolvedParallelRunGuard(
+  groups: Array<ParallelRunGroup>,
+  dismissed: Record<string, DismissedWorkflow>,
+): ParallelRunGuard | null {
+  const now = Date.now();
+  const group = groups.find((item) => {
+    if (item.status === 'cleared') return false;
+    const dismissedEntry = dismissed[parallelRunDismissId(item.id)];
+    return !dismissedEntry || !dismissedEntryIsActive(dismissedEntry, now);
+  });
   if (!group) return null;
   const status = group.status === 'live' ? 'still live' : 'waiting on review';
   return {
     detail: `${sourceDossierDisplayText(group.title)} is ${status}: ${group.summary}. ${group.nextAction}`,
+    dismissId: parallelRunDismissId(group.id),
     group,
     title: group.status === 'live'
       ? 'Previous batch still live'
       : 'Previous batch waiting',
   };
+}
+
+function parallelRunDismissId(groupId: string) {
+  return `parallel-run:${groupId}`;
 }
 
 function ParallelRunLedger({
@@ -2642,6 +2673,7 @@ function ParallelLanesPanel({
   batch,
   dashboard,
   laneLoad,
+  onAcknowledgeRunGuard,
   onActionComplete,
   onBatchComplete,
   onPrepareActions,
@@ -2655,6 +2687,7 @@ function ParallelLanesPanel({
   batch: ParallelBatch;
   dashboard: DashboardData;
   laneLoad: LaneLoad;
+  onAcknowledgeRunGuard: (dismissId: string) => void;
   onActionComplete: (workflow: WorkflowItem, shouldAdvance: boolean) => void;
   onBatchComplete: (workflows: Array<WorkflowItem>) => void;
   onPrepareActions: () => Promise<BatchActionPreparation>;
@@ -2748,14 +2781,18 @@ function ParallelLanesPanel({
               testId="copy-batch-packet"
             />
             {runGuard ? (
-              <span
+              <button
                 className="parallel-batch-run-guard"
+                data-safe-batch-memory-ack={runGuard.dismissId}
                 data-safe-batch-memory-guard={runGuard.group.id}
+                onClick={() => onAcknowledgeRunGuard(runGuard.dismissId)}
                 title={runGuard.detail}
+                type="button"
               >
                 <strong>{runGuard.title}</strong>
                 <em>{runGuard.detail}</em>
-              </span>
+                <small>Mark reviewed</small>
+              </button>
             ) : null}
             {runnableBatchActions.length ? (
               <BatchWorkflowActionButton
